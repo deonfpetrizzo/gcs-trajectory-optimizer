@@ -1,0 +1,18 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>gcs_core</name>
+  <version>0.0.1</version>
+  <description>ROS-agnostic sphere-flip regions + GCS Bezier trajectory optimization.</description>
+  <maintainer email="you@example.com">you</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+  <build_depend>eigen3_cmake_module</build_depend>
+  <build_export_depend>eigen3_cmake_module</build_export_depend>
+  <depend>eigen</depend>
+  <depend>osqp_vendor</depend>
+  <!-- Qhull is a system dep with no reliable rosdep key; install manually
+       (libqhull-dev) or build from source. See notes below. -->
+
+  <export><build_type>ament_cmake</build_type></export>
+</package>
