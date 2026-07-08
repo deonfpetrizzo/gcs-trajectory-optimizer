@@ -94,6 +94,26 @@ ConvexRegion convex_region_from_pointcloud(const VectorXd& pq,
                                            bool sphere_floor = false);
 
 
+// Locally-fit ground plane z ~= a*x + b*y + c, for latching ground-vehicle
+// regions to terrain (which may be sloped). Least-squares fit over cloud
+// points within `xy_radius` (horizontal) and `z_window` (vertical) of
+// `center`. Falls back to a flat plane through center's z (tilted = false)
+// when there are too few candidate points or the fit is ill-conditioned
+// (e.g. a narrow, nearly-collinear neighborhood).
+struct GroundPlaneFit {
+    double a = 0.0, b = 0.0, c = 0.0;
+    bool   tilted = false;
+};
+GroundPlaneFit fit_local_ground_plane(const MatrixXd& cloud, const VectorXd& center,
+                                      double xy_radius, double z_window);
+
+// Intersect a 3D region with a thin band around the fitted ground plane:
+// { x : |z - (a*x + b*y + c)| <= half_width }, appended as two halfspaces.
+ConvexRegion clamp_region_to_ground_band(const ConvexRegion& reg,
+                                         const GroundPlaneFit& plane,
+                                         double half_width);
+
+
 
 
 // Map from control points to the control points of the k-th derivative,
@@ -205,6 +225,11 @@ public:
         double w_geom_accel = 1e-2;
         double w_time_accel = 1e-2;
         double w_geom_jerk = 0.0;
+        // Weight on integral ||q'(s)||^2 ds (the geometric curve's "path energy"),
+        // a convex QP-friendly proxy for path length (true arc length involves a
+        // square root, which OSQP can't represent). Off by default; set nonzero to
+        // make the trajectory favor shorter/straighter paths over minimum time.
+        double w_geom_length = 0.0;
         int    soc_facets = 16;              // polyhedral SOC approximation
     };
 

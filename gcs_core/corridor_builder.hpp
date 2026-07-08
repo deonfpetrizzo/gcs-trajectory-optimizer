@@ -17,6 +17,7 @@
 #include "gcs_pipeline.hpp"
 
 #include <cstdint>
+#include <functional>
 #include <vector>
 
 namespace gcs {
@@ -29,6 +30,12 @@ struct CorridorOptions {
     bool     sphere_floor = true;  // use the sphere-floor variant (min-size guarantee)
     bool     drop_covered_samples = true; // skip a sample whose pq already lies in a pool region
     uint64_t seed         = 0;     // 0 -> seed from std::random_device (non-deterministic)
+
+    // Optional hook applied to each freshly grown region, before the
+    // containment/connectivity checks -- e.g. to latch a region to a ground
+    // band. Since it runs before those checks, `connected` and the region
+    // pool correctly reflect the post-processed (e.g. shrunk) region.
+    std::function<void(const VectorXd& pq, ConvexRegion& reg)> region_postprocess;
 };
 
 struct CorridorResult {

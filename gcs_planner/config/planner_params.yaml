@@ -1,0 +1,45 @@
+planner:
+  ros__parameters:
+    pcd_file: /home/deon/ros2_ws/maps/map.pcd
+    frame_id: map
+    pcd_yaw_deg: 99.0
+    
+    nominal_path: [14.1, -65.9, 5.0,  19.9, -58.7, 5.0,  27.8, -53.7, 5.0,  32.8, -45.8, 5.0,  40.0, -40.0, 5.0]
+    nominal_path_csv_files: [
+      "/home/deon/gcs_planning_ws/paths/path_m4.csv",
+      "/home/deon/gcs_planning_ws/paths/path_g1.csv",
+    ]
+
+    traj_output_dir: /home/deon/gcs_planning_ws/trajs
+
+    region_radius: 5.0 
+    vel_limit: 2.0
+    bezier_degree: 6
+    continuity: 4
+
+    num_threads: 10   
+    max_rounds: 200      
+    drop_covered_samples: true
+    corridor_seed: 0
+
+    ground_band_half_width: 0.2     
+    ground_plane_fit_radius: 2.0    
+    ground_plane_z_window: 1.0      
+
+    republish_period_sec: 2.0
+    sample_dt: 0.05
+
+    w_geom_accel: 10.0
+    w_time_accel: 0.5
+    w_geom_jerk: 0.1
+    w_time: 0.05
+    w_geom_length: 20.0
+
+    takeoff_landing_height: 1.5
+    takeoff_landing_accel_limit: 1.0
+
+trajectory_executor:
+  ros__parameters:
+    # Must match the vehicle keys planner_node derives from nominal_path_csv
+    vehicles: ["m4", "g1"]
+

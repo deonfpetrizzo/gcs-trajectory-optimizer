@@ -130,7 +130,6 @@ std::pair<VectorXd, double> ConvexRegion::chebyshev_center() const {
     VectorXd c = VectorXd::Zero(nv);
     c(d) = -1.0;                          // minimize -r
 
-    // Constraints: A x + norms r <= b   (m rows),  and r >= 0 (1 row).
     MatrixXd G(m + 1, nv);
     VectorXd lo(m + 1), up(m + 1);
     G.setZero();
@@ -256,13 +255,6 @@ MatrixXd generate_star_convex(const VectorXd& pq, const MatrixXd& cloud, double 
         return inv_sphere_flip(h.vertices, pq, R);
     }
 
-    // sphere_floor=true: add sphere-surface samples (2d cardinal + 2^d diagonal).
-    // Points at d=R flip to themselves (2R-R=R), so they pass through sphere_flip
-    // unchanged. This ensures:
-    //   - Zero-obstacle case: Qhull always has input; result is the sphere-inscribed
-    //     polytope, a valid obstacle-free region with the full sphere's extent.
-    //   - Sparse-obstacle case: asymmetric obstacle coverage can never collapse the
-    //     hull to a sliver; the region is always >= the sphere-inscribed polytope.
     std::vector<VectorXd> sphere_samples;
     for (int j = 0; j < d; ++j)
         for (int s : {-1, 1}) {
@@ -291,7 +283,6 @@ MatrixXd generate_star_convex(const VectorXd& pq, const MatrixXd& cloud, double 
 }
 
 namespace {
-// barycentric test: is p inside the simplex with the given (d+1) vertices?
 bool in_simplex(const VectorXd& p, const MatrixXd& verts, double tol = 1e-8) {
     const int d = p.size();
     MatrixXd A(d, d);
@@ -317,7 +308,6 @@ void star_to_convex(const MatrixXd& star_verts, const VectorXd& pq,
     for (int f = 0; f < nf; ++f) {
         VectorXd normal = h.A.row(f).transpose();
         double face_d = h.b(f);
-        // simplex = origin + facet vertices
         const auto& ids = h.facet_vertex_ids[f];
         MatrixXd simplex(d + 1, d);
         simplex.row(0) = origin.transpose();
@@ -357,7 +347,6 @@ VectorXd tighten_against_cloud(const MatrixXd& A, const VectorXd& b,
     for (int idx : near) {
         VectorXd p = cloud.row(idx).transpose();
         VectorXd dir = (p - pq).normalized();
-        // owner facet: most aligned outward normal
         int best = 0; double bestv = -1e18;
         for (int f = 0; f < A.rows(); ++f) {
             double a = normals.row(f).dot(dir.transpose());
@@ -380,6 +369,62 @@ ConvexRegion convex_region_from_pointcloud(const VectorXd& pq, const MatrixXd& c
     star_to_convex(sv, pq, A, b);
     if (tighten) b = tighten_against_cloud(A, b, pq, cloud, R);
     return ConvexRegion(A, b, name);
+}
+
+// ===========================================================================
+//  Ground-plane fit + latching (for ground-vehicle segments over sloped terrain)
+// ===========================================================================
+GroundPlaneFit fit_local_ground_plane(const MatrixXd& cloud, const VectorXd& center,
+                                      double xy_radius, double z_window) {
+    GroundPlaneFit fit;
+    fit.c = center(2); 
+
+    std::vector<int> near;
+    for (int i = 0; i < cloud.rows(); ++i) {
+        double dx = cloud(i, 0) - center(0), dy = cloud(i, 1) - center(1);
+        if (dx * dx + dy * dy > xy_radius * xy_radius) continue;
+        if (std::abs(cloud(i, 2) - center(2)) > z_window) continue;
+        near.push_back(i);
+    }
+    if (near.size() < 8) return fit; 
+
+    MatrixXd M(near.size(), 3);
+    VectorXd zc(near.size());
+    for (size_t k = 0; k < near.size(); ++k) {
+        M(k, 0) = cloud(near[k], 0);
+        M(k, 1) = cloud(near[k], 1);
+        M(k, 2) = 1.0;
+        zc(k) = cloud(near[k], 2);
+    }
+
+    Eigen::JacobiSVD<MatrixXd> svd(M, Eigen::ComputeThinU | Eigen::ComputeThinV);
+    VectorXd sv = svd.singularValues();
+    if (sv(sv.size() - 1) < 1e-6 * sv(0)) return fit; 
+
+    VectorXd coeffs = svd.solve(zc);
+    fit.a = coeffs(0);
+    fit.b = coeffs(1);
+    fit.c = coeffs(2);
+    fit.tilted = true;
+    return fit;
+}
+
+ConvexRegion clamp_region_to_ground_band(const ConvexRegion& reg, const GroundPlaneFit& plane,
+                                         double half_width) {
+    const int d = reg.dim();
+    if (d != 3) throw std::invalid_argument("clamp_region_to_ground_band requires a 3D region");
+
+    MatrixXd A2(reg.A.rows() + 2, d);
+    VectorXd b2(reg.b.size() + 2);
+    A2.topRows(reg.A.rows()) = reg.A;
+    b2.head(reg.b.size()) = reg.b;
+
+    A2.row(reg.A.rows()) << -plane.a, -plane.b, 1.0;
+    b2(reg.b.size()) = plane.c + half_width;
+    A2.row(reg.A.rows() + 1) << plane.a, plane.b, -1.0;
+    b2(reg.b.size() + 1) = -plane.c + half_width;
+
+    return ConvexRegion(A2, b2, reg.name);
 }
 
 // ===========================================================================

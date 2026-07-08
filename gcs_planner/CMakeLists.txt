@@ -27,6 +27,12 @@ ament_target_dependencies(planner_node
   rclcpp tf2_ros sensor_msgs geometry_msgs nav_msgs visualization_msgs
   std_msgs planner_msgs pcl_conversions)
 
-install(TARGETS planner_node DESTINATION lib/${PROJECT_NAME})
+add_executable(trajectory_executor_node src/trajectory_executor_node.cpp src/trajectory_executor_main.cpp)
+target_include_directories(trajectory_executor_node PRIVATE include)
+ament_target_dependencies(trajectory_executor_node
+  rclcpp geometry_msgs visualization_msgs std_msgs planner_msgs)
+
+install(TARGETS planner_node trajectory_executor_node DESTINATION lib/${PROJECT_NAME})
 install(DIRECTORY include/ DESTINATION include)
+install(DIRECTORY launch config rviz DESTINATION share/${PROJECT_NAME})
 ament_package()

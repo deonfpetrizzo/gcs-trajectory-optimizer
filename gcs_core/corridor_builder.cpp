@@ -8,7 +8,6 @@
 namespace gcs {
 namespace {
 
-// ---- Disjoint-set union (path-compressed) ---------------------------------
 struct DSU {
     std::vector<int> parent;
     int make_set() { 
@@ -27,10 +26,9 @@ struct DSU {
     }
 };
 
-// ---- Arc-length sampler over an ordered polyline ---------------------------
 struct PathSampler {
     const std::vector<VectorXd>& wp;
-    std::vector<double> cum;   // cumulative arc length, size wp.size()
+    std::vector<double> cum;  
     double total = 0.0;
 
     explicit PathSampler(const std::vector<VectorXd>& waypoints) : wp(waypoints) {
@@ -40,10 +38,8 @@ struct PathSampler {
         total = cum.empty() ? 0.0 : cum.back();
     }
 
-    // Map u in [0, total] to a point on the polyline.
     VectorXd at(double u) const {
         if (wp.size() == 1 || total <= 0.0) return wp.front();
-        // find segment i such that cum[i] <= u <= cum[i+1]
         size_t i = 0;
         while (i + 2 < wp.size() && cum[i + 1] < u) ++i;
         double seg = cum[i + 1] - cum[i];
@@ -52,17 +48,15 @@ struct PathSampler {
     }
 };
 
-// Try to grow a single valid region centered at pq. Returns true on success.
 bool grow_one(const VectorXd& pq, const MatrixXd& cloud, const CorridorOptions& opt, ConvexRegion& out) {
     try {
         ConvexRegion reg = convex_region_from_pointcloud(pq, cloud, opt.R, opt.tighten, "", opt.sphere_floor);
-        if (reg.contains(pq)) { 
-            out = std::move(reg); 
-            return true; 
+        if (opt.region_postprocess) opt.region_postprocess(pq, reg);
+        if (reg.contains(pq)) {
+            out = std::move(reg);
+            return true;
         }
-    } catch (const std::exception&) {
-        // degenerate query (too few local points, collinear hull, ...) -> skip
-    }
+    } catch (const std::exception&) {}
     return false;
 }
 
@@ -79,9 +73,8 @@ CorridorResult build_corridor_parallel(const VectorXd& q0, const VectorXd& qT,
     DSU dsu;
 
     std::vector<ConvexRegion> pool;
-    std::vector<int> src, tgt;   // indices of regions containing q0 / qT
+    std::vector<int> src, tgt;  
 
-    // Adds a region to the pool: DSU node, intersection edges, q0/qT membership.
     auto add_region = [&](ConvexRegion&& reg) {
         int idx = static_cast<int>(pool.size());
         dsu.make_set();
@@ -99,7 +92,6 @@ CorridorResult build_corridor_parallel(const VectorXd& q0, const VectorXd& qT,
         return false;
     };
 
-    // Seed regions at the endpoints so src/tgt can become non-empty.
     for (const VectorXd& endpt : {q0, qT}) {
         ConvexRegion reg;
         if (grow_one(endpt, cloud, opt, reg)) add_region(std::move(reg));
@@ -123,11 +115,8 @@ CorridorResult build_corridor_parallel(const VectorXd& q0, const VectorXd& qT,
 
         auto worker = [&](int tid) {
             std::mt19937_64 rng(base_seed ^ (uint64_t(round) << 32) ^ uint64_t(tid * 2654435761u));
-            std::uniform_real_distribution<double> u = U;  // thread-local copy
+            std::uniform_real_distribution<double> u = U;  
             VectorXd pq = sampler.at(u(rng));
-            // Cheap skip: if pq already lies in a pool region, this region would be
-            // largely redundant. Reading pool here is safe -- pool is not mutated
-            // during the parallel phase.
             if (opt.drop_covered_samples) {
                 for (const auto& r : pool)
                     if (r.contains(pq)) return;
@@ -144,7 +133,6 @@ CorridorResult build_corridor_parallel(const VectorXd& q0, const VectorXd& qT,
         for (int tid = 0; tid < N; ++tid) threads.emplace_back(worker, tid);
         for (auto& th : threads) th.join();
 
-        // Merge (single-threaded): add successful regions, build intersection edges.
         for (int tid = 0; tid < N; ++tid)
             if (ok[tid]) add_region(std::move(grown[tid]));
 

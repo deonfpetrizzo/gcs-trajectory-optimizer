@@ -111,7 +111,6 @@ struct ConstraintBuilder {
     std::vector<double> lo, up;
     int row = 0;
     explicit ConstraintBuilder(int n) : nvar(n) {}
-    // add rows:  lvec <= M (block, cols [col0..]) x_block <= uvec
     void add_block_eq(const MatrixXd& M, int col0, const VectorXd& rhs) {
         for (int i = 0; i < M.rows(); ++i) {
             for (int j = 0; j < M.cols(); ++j)
@@ -128,7 +127,6 @@ struct ConstraintBuilder {
         }
         row += M.rows();
     }
-    // single scalar row: lo <= sum(coeffs at cols) <= up
     void add_row(const std::vector<std::pair<int, double>>& terms, double l, double u) {
         for (auto& [c, v] : terms) trips.emplace_back(row, c, v);
         lo.push_back(l); up.push_back(u); ++row;
@@ -159,7 +157,6 @@ BezierTrajectory GCSBezierPlanner::solve_convex_restriction(
     auto base = [&](int k) { return k * per; };
     auto cpcol = [&](int k, int n, int j) { return base(k) + n * d + j; };
 
-    // durations
     std::vector<double> dur;
     if (opt.durations) dur = *opt.durations;
     else {
@@ -172,31 +169,27 @@ BezierTrajectory GCSBezierPlanner::solve_convex_restriction(
         for (double s : segs) dur.push_back(s / sum * opt.total_time);
     }
 
-    // ---- objective P (block diagonal over segments / dims) ----
     MatrixXd P = MatrixXd::Zero(nvar, nvar);
     for (int k = 0; k < nseg; ++k) {
         double T = dur[k];
         for (auto& [order, w] : opt.cost_derivatives) {
-            MatrixXd D = derivative_operator(N, T, order);    // (N+1-order x N+1)
-            MatrixXd M = energy_matrix(N - order);            // (N+1-order sq)
-            MatrixXd H = D.transpose() * M * D;               // (N+1 x N+1), on cps
-            H *= 2.0 * w * T;                                  // 1/2 x'Px convention
+            MatrixXd D = derivative_operator(N, T, order);    
+            MatrixXd M = energy_matrix(N - order);            
+            MatrixXd H = D.transpose() * M * D;              
+            H *= 2.0 * w * T;                                 
             for (int a = 0; a <= N; ++a)
                 for (int bb = 0; bb <= N; ++bb)
                     for (int j = 0; j < d; ++j)
                         P(cpcol(k, a, j), cpcol(k, bb, j)) += H(a, bb);
         }
     }
-    P += 1e-9 * MatrixXd::Identity(nvar, nvar);   // conditioning
+    P += 1e-9 * MatrixXd::Identity(nvar, nvar);  
     VectorXd cvec = VectorXd::Zero(nvar);
 
-    // ---- constraints ----
     ConstraintBuilder cb(nvar);
-    // region containment
     for (int k = 0; k < nseg; ++k) {
         const ConvexRegion& reg = regions_[seq[k]];
         for (int n = 0; n <= N; ++n) {
-            // A * cp_n <= b
             for (int i = 0; i < reg.A.rows(); ++i) {
                 std::vector<std::pair<int, double>> terms;
                 for (int j = 0; j < d; ++j) terms.push_back({cpcol(k, n, j), reg.A(i, j)});
@@ -204,10 +197,9 @@ BezierTrajectory GCSBezierPlanner::solve_convex_restriction(
             }
         }
     }
-    // optional derivative box
     for (auto& [order, lo, hi] : opt.derivative_box) {
         for (int k = 0; k < nseg; ++k) {
-            MatrixXd D = derivative_operator(N, dur[k], order);   // (m x N+1)
+            MatrixXd D = derivative_operator(N, dur[k], order); 
             int m = D.rows();
             for (int r = 0; r < m; ++r)
                 for (int j = 0; j < d; ++j) {
@@ -218,12 +210,11 @@ BezierTrajectory GCSBezierPlanner::solve_convex_restriction(
                 }
         }
     }
-    // continuity at junctions
     for (int k = 0; k + 1 < nseg; ++k) {
         for (int order = 0; order <= opt.continuity; ++order) {
             MatrixXd Dk = derivative_operator(N, dur[k], order);
             MatrixXd Dk1 = derivative_operator(N, dur[k + 1], order);
-            VectorXd last = Dk.row(Dk.rows() - 1);   // coeffs on cps of seg k
+            VectorXd last = Dk.row(Dk.rows() - 1); 
             VectorXd first = Dk1.row(0);
             for (int j = 0; j < d; ++j) {
                 std::vector<std::pair<int, double>> terms;
@@ -235,7 +226,6 @@ BezierTrajectory GCSBezierPlanner::solve_convex_restriction(
             }
         }
     }
-    // boundary conditions
     auto add_bc = [&](int k, bool at_start, const BoundaryConditions& bc) {
         double T = dur[k];
         for (auto& [order, val] : bc.conds) {
@@ -263,7 +253,6 @@ BezierTrajectory GCSBezierPlanner::solve_convex_restriction(
             for (int j = 0; j < d; ++j) G(n, j) = r.x(cpcol(k, n, j));
         traj.control_points.push_back(G);
     }
-    // recompute objective value
     traj.cost = 0.5 * r.x.transpose() * P * r.x;
     return traj;
 }
@@ -339,7 +328,7 @@ CompositeTimingTrajectory GCSCompositeBezierPlanner::solve_composite(
     MatrixXd D2 = derivative_operator(N, 1.0, 2);   // (N-1 x N+1)
     MatrixXd D3 = (N >= 3) ? derivative_operator(N, 1.0, 3) : MatrixXd();
 
-    // ---- objective ----
+    // Objective
     MatrixXd P = MatrixXd::Zero(nvar, nvar);
     VectorXd cvec = VectorXd::Zero(nvar);
     auto add_quad_on_q = [&](int k, const MatrixXd& D, double w) {
@@ -355,6 +344,7 @@ CompositeTimingTrajectory GCSCompositeBezierPlanner::solve_composite(
             P(hcol(k, a), hcol(k, bb)) += H(a, bb);
     };
     for (int k = 0; k < nseg; ++k) {
+        if (opt.w_geom_length) add_quad_on_q(k, D1, opt.w_geom_length);
         if (opt.w_geom_accel) add_quad_on_q(k, D2, opt.w_geom_accel);
         if (opt.w_time_accel) add_quad_on_h(k, D2, opt.w_time_accel);
         if (opt.w_geom_jerk && N >= 3) add_quad_on_q(k, D3, opt.w_geom_jerk);
@@ -363,7 +353,7 @@ CompositeTimingTrajectory GCSCompositeBezierPlanner::solve_composite(
     // duration cost  w_time * T  (T = last h control point of last segment)
     cvec(hcol(nseg - 1, N)) += opt.w_time;
 
-    // ---- constraints ----
+    // Constraints
     ConstraintBuilder cb(nvar);
     // polyhedral SOC directions (d-dimensional unit vectors)
     std::vector<VectorXd> dirs;
@@ -374,7 +364,7 @@ CompositeTimingTrajectory GCSCompositeBezierPlanner::solve_composite(
                 double a = 2 * M_PI * m / K;
                 VectorXd u(2); u << std::cos(a), std::sin(a); dirs.push_back(u);
             }
-        } else {  // d==3 (or higher): axes + a Fibonacci sphere
+        } else { 
             for (int m = 0; m < K; ++m) {
                 double y = 1 - 2.0 * (m + 0.5) / K;
                 double r = std::sqrt(std::max(0.0, 1 - y * y));
