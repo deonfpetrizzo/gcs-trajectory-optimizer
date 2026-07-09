@@ -1,5 +1,5 @@
 // corridor_builder.cpp
-#include "corridor_builder.hpp"
+#include "gcs_core/corridor_builder.hpp"
 
 #include <atomic>
 #include <random>

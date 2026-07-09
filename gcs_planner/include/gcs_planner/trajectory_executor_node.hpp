@@ -15,44 +15,39 @@
 
 namespace gcs_planner {
 
-// One playback lane: subscribes to one planner_msgs/Trajectory topic and
-// holds that vehicle's own animation/playback state, independent of every
-// other vehicle's lane.
+/**
+ * @brief One playback lane: subscribes to one planner_msgs/Trajectory topic and holds
+ * that vehicle's own animation/playback state, independent of every other vehicle's lane.
+ */
 struct VehicleExec {
-    std::string vehicle;  // "" in single-vehicle (legacy, unnamespaced-topic) mode
+    std::string vehicle;
 
     rclcpp::Subscription<planner_msgs::msg::Trajectory>::SharedPtr traj_sub;
     rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr marker_pub;
     rclcpp::Publisher<std_msgs::msg::Float64>::SharedPtr speed_pub;
     rclcpp::Publisher<std_msgs::msg::Float64>::SharedPtr accel_mag_pub;
 
-    // Playback state, guarded by TrajectoryExecutorNode::state_mtx_: written
-    // by on_trajectory() (subscription callback), read by on_timer() (timer
-    // callback) -- both run on the same single-threaded executor, but the
-    // lock keeps this safe regardless of executor type.
     planner_msgs::msg::Trajectory traj;
     bool has_traj = false;
     int  last_loop_index = 0;
     rclcpp::Time playback_start;
-    // (anim_time, traj_time) keyframes; anim_to_traj_time() interpolates
-    // between them, holding traj_time constant across a pause's two
-    // keyframes (same traj_time, segment_pause_sec_ apart in anim_time).
+
     std::vector<std::pair<double, double>> keyframes;
     double total_anim_duration = 0.0;
 };
 
-// Subscribes to one or more planner_msgs/Trajectory topics (one per vehicle,
-// via the `vehicles` param) and plays each back independently in wall-clock
-// time, pausing for segment_pause_sec at the end of each per-PathSegment leg
-// (and at the very end) before continuing, then looping back to t=0. Per
-// vehicle, publishes a MarkerArray each tick: an ARROW whose tail sits at the
-// vehicle's current position and whose tip is offset by velocity * scale (so
-// its length/direction directly represent speed and heading), plus a SPHERE
-// marking the current position (useful when velocity ~ 0, e.g. at
-// rest-to-rest segment endpoints, where the arrow collapses to a point).
-// Also publishes the current speed (||velocity||) and acceleration magnitude
-// each tick as plain std_msgs/Float64 topics, meant to be plotted live with
-// rqt_plot.
+/**
+ * @brief Subscribes to one or more planner_msgs/Trajectory topics (one per vehicle,
+ * via the `vehicles` param) and plays each back independently in wall-clock time.
+ * @remark Pauses for segment_pause_sec at the end of each per-PathSegment leg (and at
+ * the very end) before continuing, then loops back to t=0. Per vehicle, publishes a
+ * MarkerArray each tick: an ARROW whose tail sits at the vehicle's current position
+ * and whose tip is offset by velocity * scale (length/direction represent speed and
+ * heading), plus a SPHERE marking the current position (useful when velocity ~ 0,
+ * e.g. at rest-to-rest segment endpoints, where the arrow collapses to a point).
+ * Also publishes speed and acceleration magnitude each tick as std_msgs/Float64
+ * topics, meant to be plotted live with rqt_plot.
+ */
 class TrajectoryExecutorNode : public rclcpp::Node {
 public:
     TrajectoryExecutorNode();
@@ -66,13 +61,16 @@ private:
     void publish_plot_topics(const VehicleExec& ve, const geometry_msgs::msg::Vector3& vel,
                              const geometry_msgs::msg::Vector3& accel) const;
 
-    // Rebuilds ve.keyframes/ve.total_anim_duration from ve.traj.points: an
-    // animation-time -> trajectory-time piecewise-linear map that holds
-    // trajectory-time flat for segment_pause_sec_ at each detected
-    // per-PathSegment boundary (consecutive points with ~equal
-    // time_from_start -- see to_msg() in planner_node.cpp, which always
-    // samples the exact rest-to-rest endpoint of each segment) and at the
-    // final endpoint. Called with state_mtx_ already held.
+    /**
+     * @brief Rebuilds ve.keyframes/ve.total_anim_duration from ve.traj.points.
+     * @remark Builds an animation-time -> trajectory-time piecewise-linear map that
+     * holds trajectory-time flat for segment_pause_sec_ at each detected
+     * per-PathSegment boundary (consecutive points with ~equal time_from_start -- see
+     * build_trajectory_msg() in trajectory_msg_builders.cpp, which always samples the
+     * exact rest-to-rest endpoint of each segment) and at the final endpoint. Called
+     * with state_mtx_ already held.
+     * @param ve The vehicle lane to rebuild keyframes for.
+     */
     void build_keyframes(VehicleExec& ve);
 
     // params

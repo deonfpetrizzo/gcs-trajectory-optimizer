@@ -6,6 +6,7 @@ endif()
 
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
+find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
@@ -19,12 +20,18 @@ find_package(Eigen3 REQUIRED)
 find_package(PCL REQUIRED COMPONENTS common io filters)
 find_package(pcl_conversions REQUIRED)
 
-add_executable(planner_node src/planner_node.cpp src/main.cpp)
+add_executable(planner_node
+  src/planner_node.cpp
+  src/orientation.cpp
+  src/path_io.cpp
+  src/trajectory_msg_builders.cpp
+  src/vertical_profile.cpp
+  src/main.cpp)
 target_include_directories(planner_node PRIVATE include ${PCL_INCLUDE_DIRS})
 target_link_libraries(planner_node gcs_core::gcs_core Eigen3::Eigen ${PCL_LIBRARIES})
 
 ament_target_dependencies(planner_node
-  rclcpp tf2_ros sensor_msgs geometry_msgs nav_msgs visualization_msgs
+  rclcpp tf2 tf2_ros sensor_msgs geometry_msgs nav_msgs visualization_msgs
   std_msgs planner_msgs pcl_conversions)
 
 add_executable(trajectory_executor_node src/trajectory_executor_node.cpp src/trajectory_executor_main.cpp)

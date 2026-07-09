@@ -1,4 +1,4 @@
-#include "region_viz.hpp"
+#include "gcs_core/region_viz.hpp"
 #include <cmath>
 
 namespace gcs {

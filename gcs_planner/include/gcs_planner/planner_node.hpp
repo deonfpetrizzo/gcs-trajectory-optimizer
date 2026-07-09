@@ -10,37 +10,30 @@
 #include <tf2_ros/static_transform_broadcaster.h>
 #include <geometry_msgs/msg/transform_stamped.hpp>
 
-#include "gcs_pipeline.hpp"
-#include "corridor_builder.hpp"
-#include "region_viz.hpp"
+#include "gcs_core/gcs_core.hpp"
+#include "gcs_core/corridor_builder.hpp"
+#include "gcs_core/region_viz.hpp"
+
+#include "gcs_planner/path_io.hpp"
 
 #include <Eigen/Dense>
-#include <functional>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <vector>
 
 namespace gcs_planner {
 
-using Path = std::vector<Eigen::VectorXd>;
-
-// A contiguous run of waypoints sharing one seg_idx/tag from the nominal path
-// CSV (e.g. "GROUND", "TRANS", "AERIAL"). Corridor generation and trajectory
-// optimization run independently per segment.
-struct PathSegment {
-    std::string tag;
-    Path waypoints;
-};
-
-// One entry of nominal_path_csv_files (or the sole entry when falling back to
-// the flat nominal_path param): its own nominal path, segments, publishers,
-// and cached "latest" output. Each vehicle's full pipeline (corridor growth +
-// trajectory optimization, over all its segments) runs independently of the
-// others -- in its own thread, on its own topics, with trajectory timing
-// starting at zero -- so that e.g. m4, g1, and g1+m4 get separate
-// trajectories instead of being concatenated into one.
+/**
+ * @brief One entry of nominal_path_csv_files (or the sole entry when falling back to
+ * the flat nominal_path param): its own nominal path, segments, publishers, and
+ * cached "latest" output. Each vehicle's full pipeline (corridor growth + trajectory
+ * optimization, over all its segments) runs independently of the others -- in its own
+ * thread, on its own topics, with trajectory timing starting at zero -- so that e.g.
+ * m4, g1, and g1+m4 get separate trajectories instead of being concatenated into one.
+ */
 struct VehiclePlan {
-    std::string vehicle;   // key derived from the CSV filename, e.g. "m4"; "" in flat-param fallback
+    std::string vehicle; 
     Path nominal_path;
     std::vector<PathSegment> segments;
 
@@ -50,9 +43,6 @@ struct VehiclePlan {
     rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr traj_segments_pub;
     rclcpp::Publisher<planner_msgs::msg::Trajectory>::SharedPtr traj_pub;
 
-    // Cached "latest" state, guarded by PlannerNode::state_mtx_: written by
-    // run_pipeline_for_vehicle() (on its own worker thread) and read/republished
-    // by publish_all() (on the executor thread, via republish_timer_).
     visualization_msgs::msg::MarkerArray last_corridor_markers;
     nav_msgs::msg::Path last_traj_path;
     visualization_msgs::msg::MarkerArray last_traj_segment_markers;
@@ -67,72 +57,98 @@ public:
 
 private:
     void on_cloud(const sensor_msgs::msg::PointCloud2::SharedPtr msg);
+
+    /**
+     * @brief Loads and downsamples a PCD map file, then publishes it.
+     * @param file Path to the PCD file.
+     * @return True on success.
+     */
     bool load_pcd(const std::string& file);
-    // Spawns one thread per VehiclePlan (run_pipeline_for_vehicle()) and
-    // joins them, so all vehicles' corridors/trajectories are grown/optimized
-    // in parallel.
+
+    /**
+     * @brief Spawns one thread per VehiclePlan (run_pipeline_for_vehicle()) and joins
+     * them, so all vehicles' corridors/trajectories are grown/optimized in parallel.
+     */
     void run_pipeline();
-    // Grows the corridor and optimizes the trajectory for every segment of
-    // one vehicle, then caches and publishes that vehicle's own topics.
-    // Runs on a dedicated worker thread spawned by run_pipeline(); touches
-    // only its own VehiclePlan and the (read-only, shared) cloud matrix.
+
+    /**
+     * @brief Grows the corridor and optimizes the trajectory for every segment of one
+     * vehicle, then caches and publishes that vehicle's own topics.
+     * @remark Runs on a dedicated worker thread spawned by run_pipeline(); touches
+     * only its own VehiclePlan and the read-only shared cloud matrix.
+     * @param vp The vehicle to plan for.
+     * @param P Obstacle point cloud (rows = points).
+     */
     void run_pipeline_for_vehicle(VehiclePlan& vp, const Eigen::MatrixXd& P);
-    // Replaces each TRANS segment sandwiched between a GROUND segment and an
-    // AERIAL segment with a straight vertical column of height
-    // takeoff_landing_height_ (ground point <-> ground point + height in z),
-    // and extends the neighboring AERIAL segment so it starts/ends at the top
-    // of that column instead of the CSV-authored diagonal transition. Run
-    // once per vehicle right after its segments are parsed (see constructor);
-    // run_pipeline_for_vehicle() detects a resegmented TRANS segment (exactly
-    // 2 waypoints) and gives it a plain vertical ease trajectory instead of
-    // the usual corridor-growth + optimization path. TRANS segments not
-    // bounded by GROUND/AERIAL neighbors are left as authored.
+
+    /**
+     * @brief Plans one segment: grows its corridor and produces its trajectory.
+     * @remark A resegmented TRANS segment (2 waypoints) gets a plain vertical ease
+     * profile (make_vertical_trajectory()); all others go through corridor growth
+     * (parallel sampling + disjoint-set-union connectivity, build_corridor_parallel())
+     * followed by QP optimization (GCSCompositeBezierPlanner).
+     * @param vp The vehicle the segment belongs to.
+     * @param si Segment index (for logging).
+     * @param seg The segment to plan.
+     * @param P Obstacle point cloud (rows = points).
+     * @param all_regions Grown regions are appended here.
+     * @param region_tags Each appended region's tag is appended here, aligned with all_regions.
+     * @return The segment's trajectory, or nullopt if it could not be planned (no
+     * regions grown, an uncontained vertical hop, or optimizer failure).
+     */
+    std::optional<gcs::CompositeTimingTrajectory> plan_segment(
+        const VehiclePlan& vp, size_t si, const PathSegment& seg, const Eigen::MatrixXd& P,
+        std::vector<gcs::ConvexRegion>& all_regions,
+        std::vector<std::string>& region_tags) const;
+
+    /**
+     * @brief Builds corridor/trajectory messages for one vehicle, caches them, exports
+     * the trajectory CSV if traj_output_dir_ is set, and publishes on the vehicle's topics.
+     * @param vp The vehicle to publish for.
+     * @param all_regions All regions grown across the vehicle's segments.
+     * @param region_tags Each region's tag, aligned with all_regions.
+     * @param seg_trajs Each planned segment's trajectory.
+     * @param traj_tags Each trajectory's tag, aligned with seg_trajs.
+     */
+    void publish_vehicle_output(VehiclePlan& vp,
+        const std::vector<gcs::ConvexRegion>& all_regions,
+        const std::vector<std::string>& region_tags,
+        const std::vector<gcs::CompositeTimingTrajectory>& seg_trajs,
+        const std::vector<std::string>& traj_tags);
+
+    /**
+     * @brief Replaces each TRANS segment sandwiched between a GROUND segment and an
+     * AERIAL segment with a straight vertical column of height
+     * takeoff_landing_height_, and extends the neighboring AERIAL segment so it
+     * starts/ends at the top of that column instead of the CSV-authored diagonal
+     * transition.
+     * @remark Run once per vehicle right after its segments are parsed (see
+     * constructor). TRANS segments not bounded by GROUND/AERIAL neighbors are left as authored.
+     * @param vp The vehicle whose segments to resegment.
+     */
     void resegment_transitions(VehiclePlan& vp) const;
-    // Writes one vehicle's exported trajectory to
-    // "<traj_output_dir_>/traj_<vehicle>.csv" with columns
-    // seg_idx,tag,x,y,z,qx,qy,qz,qw (mirroring the input path CSV format,
-    // plus orientation). Segment boundaries within the flat, concatenated
-    // Trajectory message are detected the same way trajectory_executor_node
-    // does: to_msg() always samples the exact rest-to-rest endpoint of each
-    // segment, so two consecutive points sharing the same time_from_start
-    // mark a boundary; `seg_tags` gives each detected segment's tag in
-    // order. Orientation is built via tf2::Quaternion::setRPY() directly
-    // from each point's roll/pitch/yaw fields (roll/pitch derived in
-    // to_msg() -- see attitude_from_accel_yaw() in the .cpp).
-    void write_trajectory_csv(const planner_msgs::msg::Trajectory& traj,
-                              const std::vector<std::string>& seg_tags,
-                              const std::string& file_path) const;
-    // Publish the latest cached cloud/voxels/nominal-path/corridor/trajectory
-    // messages for every vehicle. Called once per vehicle right after its
-    // run_pipeline_for_vehicle() finishes and then on a timer, so a display
-    // re-checked in RViz (which may have missed the transient_local latch,
-    // or just want a fresh look) gets it again within one republish period
-    // instead of only once at startup.
+
+    /**
+     * @brief Publishes the latest cached cloud/voxels/nominal-path/corridor/trajectory
+     * messages for every vehicle.
+     * @remark Called once per vehicle right after its run_pipeline_for_vehicle()
+     * finishes, and then on a timer, so an RViz display that missed the
+     * transient_local latch reappears within one republish period instead of only once at startup.
+     */
     void publish_all();
 
-    // conversions / helpers
+    /**
+     * @brief Converts a PointCloud2 message to an Eigen point matrix.
+     * @param msg The point cloud message.
+     * @return One point per row; non-finite points are dropped.
+     */
     Eigen::MatrixXd cloud_to_eigen(const sensor_msgs::msg::PointCloud2& msg) const;
-    // Load x,y,z waypoints from one or more CSV files, grouped into segments
-    // by contiguous seg_idx (header must include "x","y","z"; "seg_idx" and
-    // "tag" are optional -- absent means one untagged segment). Segments are
-    // appended across files in list order.
-    std::vector<PathSegment> load_path_segments_csv(const std::vector<std::string>& files) const;
 
-    // message builders
-    planner_msgs::msg::Trajectory
-    to_msg(const std::vector<gcs::CompositeTimingTrajectory>& trajs,
-          const std::vector<std::string>& tags,
-          const std_msgs::msg::Header& hdr) const;
-    nav_msgs::msg::Path make_path_msg(const Path& pts) const;
-    nav_msgs::msg::Path make_traj_path(const std::vector<gcs::CompositeTimingTrajectory>& trajs,
-                                       const std_msgs::msg::Header& hdr) const;
-    visualization_msgs::msg::MarkerArray
-    make_corridor_markers(const std::vector<gcs::ConvexRegion>& regions,
-                         const std::vector<std::string>& tags) const;
-    visualization_msgs::msg::MarkerArray
-    make_traj_segment_markers(const std::vector<gcs::CompositeTimingTrajectory>& trajs,
-                              const std::vector<std::string>& tags,
-                              const std_msgs::msg::Header& hdr) const;
+    /**
+     * @brief Builds a header stamped now() in frame_id_.
+     * @return The header, used for every outgoing message.
+     */
+    std_msgs::msg::Header make_header() const;
 
     // params
     double R_, v_max_, sample_dt_;
@@ -143,6 +159,10 @@ private:
     double republish_period_sec_;
     double w_geom_accel_, w_time_accel_, w_geom_jerk_;
     double w_time_, w_geom_length_;
+    double geom_accel_limit_, time_accel_limit_;
+    double t_min_, t_max_, h_dot_min_;
+    int    soc_facets_;
+    bool   rest_to_rest_accel_;
     int    degree_, continuity_;
     int    num_threads_, max_rounds_;
     int64_t corridor_seed_;
@@ -156,11 +176,6 @@ private:
     rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr voxels_pub_;
     rclcpp::TimerBase::SharedPtr republish_timer_;
 
-    // Cached "latest" state, guarded by state_mtx_: written by
-    // run_pipeline_for_vehicle() (on its own worker thread, one per vehicle)
-    // and read/republished by publish_all() (on the executor thread, both
-    // directly and via republish_timer_). Per-vehicle cached output lives in
-    // each VehiclePlan (see vehicles_ above); this mutex guards all of them.
     std::mutex state_mtx_;
     sensor_msgs::msg::PointCloud2::SharedPtr last_cloud_;
     visualization_msgs::msg::MarkerArray last_voxels_;

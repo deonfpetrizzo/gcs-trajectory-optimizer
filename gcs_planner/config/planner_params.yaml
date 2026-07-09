@@ -1,45 +1,60 @@
 planner:
   ros__parameters:
-    pcd_file: /home/deon/ros2_ws/maps/map.pcd
-    frame_id: map
-    pcd_yaw_deg: 99.0
-    
-    nominal_path: [14.1, -65.9, 5.0,  19.9, -58.7, 5.0,  27.8, -53.7, 5.0,  32.8, -45.8, 5.0,  40.0, -40.0, 5.0]
-    nominal_path_csv_files: [
+    pcd_file: /home/deon/ros2_ws/maps/map.pcd   # point cloud map to load at startup
+    frame_id: map                               # frame all published messages are stamped in
+    pcd_yaw_deg: 99.0                           # rotates the raw cloud about Z after loading, to match the nominal path's frame
+
+    nominal_path: [14.1, -65.9, 5.0,  19.9, -58.7, 5.0,  27.8, -53.7, 5.0,  32.8, -45.8, 5.0,  40.0, -40.0, 5.0]  # flat x,y,z fallback path
+    nominal_path_csv_files: [                   # one file per vehicle; seg_idx/tag columns split each into segments
       "/home/deon/gcs_planning_ws/paths/path_m4.csv",
       "/home/deon/gcs_planning_ws/paths/path_g1.csv",
+      "/home/deon/gcs_planning_ws/paths/path_g1m4.csv",
     ]
 
-    traj_output_dir: /home/deon/gcs_planning_ws/trajs
+    traj_output_dir: /home/deon/gcs_planning_ws/trajs  # per-vehicle trajectory CSV export dir; empty disables export
+    republish_period_sec: 2.0                          # how often cached state is re-published for late-joining RViz displays
 
-    region_radius: 5.0 
-    vel_limit: 2.0
-    bezier_degree: 6
-    continuity: 4
+    region_radius: 5.0             # sphere-flip region radius (R)
+    num_threads: 10                # regions grown per round
+    max_rounds: 200                # safety cap on growth rounds
+    drop_covered_samples: true     # skip a sample already covered by a grown region
+    corridor_seed: 0               # 0 seeds from std::random_device (non-deterministic)
 
-    num_threads: 10   
-    max_rounds: 200      
-    drop_covered_samples: true
-    corridor_seed: 0
+    ground_band_half_width: 0.2      # half-width of the terrain-following band
+    ground_plane_fit_radius: 2.0     # horizontal radius for the local plane fit
+    ground_plane_z_window: 1.0       # vertical window for the local plane fit
 
-    ground_band_half_width: 0.2     
-    ground_plane_fit_radius: 2.0    
-    ground_plane_z_window: 1.0      
+    takeoff_landing_height: 1.5         # vertical column height
+    takeoff_landing_accel_limit: 1.0    # acceleration limit for the closed-form quintic ease profile
 
-    republish_period_sec: 2.0
-    sample_dt: 0.05
+    vel_limit: 1.3                  # ||r'(t)|| <= vel_limit (m/s)
+    bezier_degree: 6                # per-segment Bezier degree
+    continuity: 4                   # continuity order enforced at segment junctions
+    sample_dt: 0.05                 # output trajectory sampling interval
+    geom_accel_limit: 0.0           # box cap on ||q''(s)|| (path curvature); <= 0 disables
+    time_accel_limit: 0.0           # box cap on |h''(s)| (timing curvature); <= 0 disables
+    t_min: 0.0                      # minimum total segment duration
+    t_max: 1.0e+9                   # maximum total segment duration
+    h_dot_min: 0.001                # lower bound on h'(s), keeps the timing map monotonic
+    soc_facets: 16                  # polyhedral facet count approximating the velocity SOC
+    rest_to_rest_accel: true        # zero acceleration at each segment's start/end
 
-    w_geom_accel: 10.0
-    w_time_accel: 0.5
-    w_geom_jerk: 0.1
-    w_time: 0.05
-    w_geom_length: 20.0
-
-    takeoff_landing_height: 1.5
-    takeoff_landing_accel_limit: 1.0
+    w_geom_accel: 10.0     # weight on integral ||q''||^2 (geometric smoothness)
+    w_time_accel: 0.5      # weight on integral ||h''||^2 (timing smoothness)
+    w_geom_jerk: 0.1       # weight on integral ||q'''||^2
+    w_geom_length: 30.0    # weight on integral ||q'||^2 (path-length proxy)
+    w_time: 0.05           # weight on total duration T
 
 trajectory_executor:
   ros__parameters:
-    # Must match the vehicle keys planner_node derives from nominal_path_csv
-    vehicles: ["m4", "g1"]
+    vehicles: ["m4", "g1", "g1m4"]   # must match the vehicle keys planner_node derives from nominal_path_csv_files
 
+    vector_time_scale: 0.5         # scales velocity into the arrow's tip offset
+    shaft_diameter: 0.08           # arrow shaft diameter
+    head_diameter: 0.18            # arrow head diameter
+    head_length: 0.0               # arrow head length (0 = auto)
+    position_marker_scale: 0.25    # sphere marker diameter at the current position
+
+    viz_rate_hz: 30.0            # marker/plot publish rate
+    segment_pause_sec: 2.0       # pause length at each per-segment boundary and at the end of the loop
+    frame_id_override: ""        # overrides each trajectory message's own frame_id if non-empty
