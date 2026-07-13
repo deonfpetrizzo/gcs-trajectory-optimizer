@@ -63,7 +63,9 @@ ros2 launch gcs_planner planner.launch.py params_file:=/path/to/planner_params.y
 Or run the node directly:
 
 ```bash
-ros2 run gcs_planner planner_node --ros-args --params-file src/gcs_planner/config/planner_params.yaml
+ros2 run gcs_planner planner_node \
+  --ros-args \
+  --params-file src/gcs_planner/config/planner_params.yaml
 ```
 
 Parameters live in `gcs_planner/config/planner_params.yaml`. Key ones include
