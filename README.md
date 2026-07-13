@@ -44,7 +44,7 @@ colcon build --symlink-install
 source install/setup.bash
 ```
 
-After cloning and initial setup, if modifications are made to source files, do a standard 
+After cloning and initial setup, if modifications are made to source files, do standard 
 `source` and `build` commands before running:
 ```bash
 source /opt/ros/humble/setup.bash
