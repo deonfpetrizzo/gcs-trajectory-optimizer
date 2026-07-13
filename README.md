@@ -32,62 +32,57 @@ Everything else is resolved by `rosdep` (see below).
 ## Setup & Build
 
 Clone this repository into the `src/` directory of a colcon workspace:
-
 ```bash
 mkdir -p ~/gcs_planning_ws/src
 cd ~/gcs_planning_ws/src
-git clone <repo-url> .        # this repo is the workspace's src/ directory
+git clone <repo-url> .        
 cd ~/gcs_planning_ws
 
 source /opt/ros/humble/setup.bash
 rosdep install --from-paths src --ignore-src -r -y
-colcon build
+colcon build --symlink-install
 source install/setup.bash
 ```
 
-Build a single package (dependency order is respected):
-
+After cloning and initial setup, if modifications are made to source files, do a standard 
+`source` and `build` commands before running:
 ```bash
-colcon build --packages-select gcs_core
+source /opt/ros/humble/setup.bash
+colcon build --symlink-install
+source install/setup.bash
 ```
 
 ## Run
 
-Using the launch file (starts the planner, optionally the executor and RViz):
+Using the launch file (starts the planner, executer, and RViz):
 
 ```bash
-ros2 launch gcs_planner planner.launch.py
-# optional args:
-#   params_file:=/path/to/planner_params.yaml
-#   use_rviz:=true|false
-#   use_executor:=true|false
+ros2 launch gcs_planner planner.launch.py params_file:=/path/to/planner_params.yaml
 ```
 
 Or run the node directly:
 
 ```bash
-ros2 run gcs_planner planner_node --ros-args \
-  --params-file src/gcs_planner/config/planner_params.yaml
+ros2 run gcs_planner planner_node --ros-args --params-file src/gcs_planner/config/planner_params.yaml
 ```
 
-Parameters live in `gcs_planner/config/planner_params.yaml` — key ones include
-`pcd_file`, `nominal_path_csv_files`, `region_radius`, `vel_limit`, `frame_id`, and
-`pcd_yaw_deg` (rotates the loaded cloud about Z to match the path's frame). See the
+Parameters live in `gcs_planner/config/planner_params.yaml`. Key ones include
+`pcd_file`, `nominal_path_csv_files`, `traj_output_directory`, `region_radius`, 
+`vel_limit`, `frame_id`, `vehicles`, and `pcd_yaw_deg` (rotates the loaded cloud about Z to match the path's frame). See the
 comments in that file for the full list.
 
 ## Inputs & Outputs
 
 **Inputs**
-- A point cloud map (`.pcd`) — set via the `pcd_file` parameter (or a live
-  `lidar_points` topic).
-- Nominal waypoint paths as CSV with a header row `seg_idx,tag,x,y,z` — set via
+- A point cloud map (`.pcd`). Set via the `pcd_file` parameter.
+- Nominal waypoint paths as CSV with a header row `seg_idx,tag,x,y,z`. Set via
   `nominal_path_csv_files` (one file per vehicle). The `tag` column (e.g.
   `GROUND` / `TRANS` / `AERIAL`) selects per-segment behavior.
 
 Map and path file locations are configured by absolute paths in
 `planner_params.yaml`; point them at your own `.pcd` and `.csv` files.
 
-**Published topics**
+**Published Topics**
 - `map_cloud` — downsampled input cloud
 - `occupancy_grid` — `nav_msgs/OccupancyGrid` traversability occupancy
 - `traversability` — traversability score markers
