@@ -2,9 +2,9 @@
 
 A **GCS (Graph of Convex Sets)** trajectory planner for 3D navigation. Given a point
 cloud map and a nominal waypoint path, the planner builds a corridor of overlapping
-convex free-space regions and optimizes a smooth Bezier trajectory that respects a
-velocity limit. It supports **2.5D traversability-aware ground corridors** (terrain-latched
-sloped prisms), **aerial corridors**, and **takeoff/landing hops** between them.
+convex free-space regions and optimizes a smooth Bezier trajectory that respects corridor containment. 
+It supports **2.5D traversability-aware ground corridors**, **aerial corridors**, and **takeoff/landing hops** 
+between them.
 
 ## Packages
 
@@ -13,7 +13,7 @@ sloped prisms), **aerial corridors**, and **takeoff/landing hops** between them.
 | `planner_msgs` | Custom messages: `Trajectory` / `TrajectoryPoint`. |
 | `gcs_core` | ROS-agnostic C++17 library: sphere-flip convex free-space regions, corridor builder, and Bezier + composite shape-timing GCS optimization (uses OSQP + Qhull). |
 | `traversability_core` | ROS-agnostic C++17 library: turns a point cloud into a 2D occupancy grid for the 2.5D ground corridor generation. |
-| `gcs_planner` | ROS2 node (`planner_node`) that integrates and visualizes the above in RViz, `trajectory_executor_node` (moving velocity-vector visualization), and launch/RViz config. |
+| `gcs_planner` | ROS2 `planner_node` that (integrates and visualizes the above in RViz), `trajectory_executor_node` (samples trajectories and publishes moving velocity-vector visualization), and launch/RViz config. |
 
 Dependency chain: `gcs_core`, `traversability_core`, and `planner_msgs` → `gcs_planner`.
 `gcs_core` and `traversability_core` are independent siblings.
