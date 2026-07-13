@@ -11,9 +11,9 @@ sloped prisms), **aerial corridors**, and **takeoff/landing hops** between them.
 | Package | Description |
 |---|---|
 | `planner_msgs` | Custom messages: `Trajectory` / `TrajectoryPoint`. |
-| `gcs_core` | ROS-agnostic C++17 library: sphere-flip convex free-space regions, ground-corridor builder, and Bezier + composite shape/timing GCS optimization (uses OSQP + Qhull). |
-| `traversability_core` | ROS-agnostic C++17 library: turns a point cloud into a per-robot 2D occupancy grid for the 2.5D ground corridor. |
-| `gcs_planner` | ROS2 node (`planner_node`) that integrates the above, plus `trajectory_executor_node` (moving velocity-vector visualization) and launch/RViz config. |
+| `gcs_core` | ROS-agnostic C++17 library: sphere-flip convex free-space regions, corridor builder, and Bezier + composite shape-timing GCS optimization (uses OSQP + Qhull). |
+| `traversability_core` | ROS-agnostic C++17 library: turns a point cloud into a 2D occupancy grid for the 2.5D ground corridor generation. |
+| `gcs_planner` | ROS2 node (`planner_node`) that integrates and visualizes the above in RViz, `trajectory_executor_node` (moving velocity-vector visualization), and launch/RViz config. |
 
 Dependency chain: `gcs_core`, `traversability_core`, and `planner_msgs` → `gcs_planner`.
 `gcs_core` and `traversability_core` are independent siblings.
