@@ -48,9 +48,9 @@ struct PathSampler {
     }
 };
 
-bool grow_one(const VectorXd& pq, const MatrixXd& cloud, const CorridorOptions& opt, ConvexRegion& out) {
+bool grow_one(const VectorXd& pq, const PointIndex& index, const CorridorOptions& opt, ConvexRegion& out) {
     try {
-        ConvexRegion reg = convex_region_from_pointcloud(pq, cloud, opt.R, opt.tighten, "", opt.sphere_floor);
+        ConvexRegion reg = convex_region_from_pointcloud(pq, index, opt.R, opt.tighten, "", opt.sphere_floor);
         if (opt.region_postprocess) opt.region_postprocess(pq, reg);
         if (reg.contains(pq)) {
             out = std::move(reg);
@@ -69,6 +69,7 @@ CorridorResult build_corridor_parallel(const VectorXd& q0, const VectorXd& qT,
     CorridorResult result;
     if (nominal_path.empty()) return result;
 
+    PointIndex index(cloud, opt.R);
     PathSampler sampler(nominal_path);
     DSU dsu;
 
@@ -94,7 +95,7 @@ CorridorResult build_corridor_parallel(const VectorXd& q0, const VectorXd& qT,
 
     for (const VectorXd& endpt : {q0, qT}) {
         ConvexRegion reg;
-        if (grow_one(endpt, cloud, opt, reg)) add_region(std::move(reg));
+        if (grow_one(endpt, index, opt, reg)) add_region(std::move(reg));
     }
     if (connected()) { 
         result.regions = std::move(pool); 
@@ -122,9 +123,9 @@ CorridorResult build_corridor_parallel(const VectorXd& q0, const VectorXd& qT,
                     if (r.contains(pq)) return;
             }
             ConvexRegion reg;
-            if (grow_one(pq, cloud, opt, reg)) { 
-                grown[tid] = std::move(reg); 
-                ok[tid] = 1; 
+            if (grow_one(pq, index, opt, reg)) {
+                grown[tid] = std::move(reg);
+                ok[tid] = 1;
             }
         };
 

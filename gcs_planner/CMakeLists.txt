@@ -15,6 +15,7 @@ find_package(visualization_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(planner_msgs REQUIRED)
 find_package(gcs_core REQUIRED)
+find_package(traversability_core REQUIRED)
 find_package(eigen3_cmake_module REQUIRED)
 find_package(Eigen3 REQUIRED)
 find_package(PCL REQUIRED COMPONENTS common io filters)
@@ -28,7 +29,7 @@ add_executable(planner_node
   src/vertical_profile.cpp
   src/main.cpp)
 target_include_directories(planner_node PRIVATE include ${PCL_INCLUDE_DIRS})
-target_link_libraries(planner_node gcs_core::gcs_core Eigen3::Eigen ${PCL_LIBRARIES})
+target_link_libraries(planner_node gcs_core::gcs_core traversability_core::traversability_core Eigen3::Eigen ${PCL_LIBRARIES})
 
 ament_target_dependencies(planner_node
   rclcpp tf2 tf2_ros sensor_msgs geometry_msgs nav_msgs visualization_msgs

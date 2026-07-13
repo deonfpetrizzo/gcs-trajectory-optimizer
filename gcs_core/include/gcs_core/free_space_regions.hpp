@@ -3,6 +3,7 @@
 
 #include "gcs_core/gcs_types.hpp"
 #include "gcs_core/convex_region.hpp"
+#include "gcs_core/point_index.hpp"
 
 #include <string>
 
@@ -42,6 +43,19 @@ MatrixXd generate_star_convex(const VectorXd& pq, const MatrixXd& cloud, double 
                                bool sphere_floor = false);
 
 /**
+ * @brief Star-convex polytope vertices using a prebuilt spatial index.
+ * @remark Index-backed overload of generate_star_convex(): the in-R obstacle set is
+ * gathered from `index` instead of a full-cloud scan; results are identical.
+ * @param pq Query point (region center).
+ * @param index Spatial index over the obstacle cloud (see PointIndex).
+ * @param R Sphere-flip radius.
+ * @param sphere_floor If true, adds sphere-surface samples for the minimum-size guarantee.
+ * @return Star-convex hull vertices in original space.
+ */
+MatrixXd generate_star_convex(const VectorXd& pq, const PointIndex& index, double R,
+                               bool sphere_floor = false);
+
+/**
  * @brief Trims star-convex vertices to a strict convex H-polytope.
  * @remark Qhull convex hull + barycentric simplex containment test.
  * @param star_verts Star-convex hull vertices (e.g. from generate_star_convex()).
@@ -66,6 +80,25 @@ void star_to_convex(const MatrixXd& star_verts, const VectorXd& pq,
  */
 ConvexRegion convex_region_from_pointcloud(const VectorXd& pq,
                                            const MatrixXd& cloud, double R,
+                                           bool tighten = true,
+                                           const std::string& name = "",
+                                           bool sphere_floor = false);
+
+/**
+ * @brief One-shot region generation using a prebuilt spatial index.
+ * @remark Index-backed overload of convex_region_from_pointcloud(): both the region
+ * generation and the tightening pass gather their in-R obstacle sets from `index`
+ * instead of scanning the whole cloud. Results are identical to the cloud overload.
+ * @param pq Query point (region center).
+ * @param index Spatial index over the obstacle cloud (see PointIndex).
+ * @param R Sphere-flip radius.
+ * @param tighten If true, a safety pass guarantees no in-R cloud point lies inside the region.
+ * @param name Optional region name.
+ * @param sphere_floor If true, enables the minimum-size guarantee (see generate_star_convex()).
+ * @return The obstacle-free convex region.
+ */
+ConvexRegion convex_region_from_pointcloud(const VectorXd& pq,
+                                           const PointIndex& index, double R,
                                            bool tighten = true,
                                            const std::string& name = "",
                                            bool sphere_floor = false);

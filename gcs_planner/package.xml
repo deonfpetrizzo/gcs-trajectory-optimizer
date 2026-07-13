@@ -19,6 +19,7 @@
   <depend>std_msgs</depend>
   <depend>planner_msgs</depend>
   <depend>gcs_core</depend>
+  <depend>traversability_core</depend>
   <depend>pcl_conversions</depend>
   <depend>libpcl-all-dev</depend>
   <depend>eigen</depend>

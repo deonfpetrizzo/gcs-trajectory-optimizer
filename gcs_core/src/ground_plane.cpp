@@ -42,22 +42,24 @@ GroundPlaneFit fit_local_ground_plane(const MatrixXd& cloud, const VectorXd& cen
     return fit;
 }
 
-ConvexRegion clamp_region_to_ground_band(const ConvexRegion& reg, const GroundPlaneFit& plane,
-                                         double half_width) {
-    const int d = reg.dim();
-    if (d != 3) throw std::invalid_argument("clamp_region_to_ground_band requires a 3D region");
+ConvexRegion lift_polygon_to_prism(const ConvexRegion& poly2d, const GroundPlaneFit& plane,
+                                   double floor_offset, double ceil_height) {
+    if (poly2d.dim() != 2)
+        throw std::invalid_argument("lift_polygon_to_prism requires a 2D region");
 
-    MatrixXd A2(reg.A.rows() + 2, d);
-    VectorXd b2(reg.b.size() + 2);
-    A2.topRows(reg.A.rows()) = reg.A;
-    b2.head(reg.b.size()) = reg.b;
+    const int m = poly2d.A.rows();
+    MatrixXd A(m + 2, 3);
+    VectorXd b(m + 2);
+    A.topRows(m).leftCols(2) = poly2d.A;
+    A.topRows(m).col(2).setZero();
+    b.head(m) = poly2d.b;
 
-    A2.row(reg.A.rows()) << -plane.a, -plane.b, 1.0;
-    b2(reg.b.size()) = plane.c + half_width;
-    A2.row(reg.A.rows() + 1) << plane.a, plane.b, -1.0;
-    b2(reg.b.size() + 1) = -plane.c + half_width;
+    A.row(m) << plane.a, plane.b, -1.0;
+    b(m) = -(plane.c + floor_offset);
+    A.row(m + 1) << -plane.a, -plane.b, 1.0;
+    b(m + 1) = plane.c + ceil_height;
 
-    return ConvexRegion(A2, b2, reg.name);
+    return ConvexRegion(A, b, poly2d.name);
 }
 
 }  // namespace gcs

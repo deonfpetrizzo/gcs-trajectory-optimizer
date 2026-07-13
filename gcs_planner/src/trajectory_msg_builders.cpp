@@ -166,4 +166,63 @@ visualization_msgs::msg::MarkerArray make_corridor_markers(
     return arr;
 }
 
+visualization_msgs::msg::MarkerArray make_traversability_markers(
+    const trav::TraversabilityMap& map, const trav::RobotModel& robot,
+    const std_msgs::msg::Header& hdr) {
+    visualization_msgs::msg::MarkerArray arr;
+
+    visualization_msgs::msg::Marker m;
+    m.header = hdr;
+    m.ns = "traversability";
+    m.id = 0;
+    m.type = visualization_msgs::msg::Marker::CUBE_LIST;
+    m.action = visualization_msgs::msg::Marker::ADD;
+    m.scale.x = map.info.resolution;
+    m.scale.y = map.info.resolution;
+    m.scale.z = 0.02;
+    m.pose.orientation.w = 1.0;
+
+    for (int iy = 0; iy < map.info.ny; ++iy) {
+        for (int ix = 0; ix < map.info.nx; ++ix) {
+            const trav::TraversabilityCell& cell = map.at(ix, iy);
+            if (!cell.valid) continue;
+
+            const Eigen::Vector2d ctr = map.info.cell_center(ix, iy);
+            geometry_msgs::msg::Point p;
+            p.x = ctr.x();
+            p.y = ctr.y();
+            p.z = cell.ground_z;
+            m.points.push_back(p);
+
+            const double s = trav::traversability_score(cell, robot);
+            std_msgs::msg::ColorRGBA c;
+            c.r = static_cast<float>(1.0 - s);
+            c.g = static_cast<float>(s);
+            c.b = 0.0f;
+            c.a = 0.85f;
+            m.colors.push_back(c);
+        }
+    }
+    arr.markers.push_back(m);
+    return arr;
+}
+
+nav_msgs::msg::OccupancyGrid make_occupancy_grid_msg(const trav::OccupancyGrid2D& grid,
+                                                     const std_msgs::msg::Header& hdr) {
+    nav_msgs::msg::OccupancyGrid msg;
+    msg.header = hdr;
+    msg.info.resolution = static_cast<float>(grid.info.resolution);
+    msg.info.width = static_cast<uint32_t>(grid.info.nx);
+    msg.info.height = static_cast<uint32_t>(grid.info.ny);
+    msg.info.origin.position.x = grid.info.origin.x();
+    msg.info.origin.position.y = grid.info.origin.y();
+    msg.info.origin.position.z = 0.0;
+    msg.info.origin.orientation.w = 1.0;
+
+    msg.data.resize(grid.occ.size());
+    for (size_t i = 0; i < grid.occ.size(); ++i)
+        msg.data[i] = grid.occ[i] ? static_cast<int8_t>(100) : static_cast<int8_t>(0);
+    return msg;
+}
+
 }  // namespace gcs_planner

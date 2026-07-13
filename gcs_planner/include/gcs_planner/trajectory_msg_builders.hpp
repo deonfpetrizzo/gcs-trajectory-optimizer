@@ -5,7 +5,9 @@
 #include "gcs_core/gcs_core.hpp"
 #include "gcs_core/region_viz.hpp"
 #include "gcs_planner/path_io.hpp"
+#include "traversability_core/traversability_core.hpp"
 
+#include <nav_msgs/msg/occupancy_grid.hpp>
 #include <nav_msgs/msg/path.hpp>
 #include <planner_msgs/msg/trajectory.hpp>
 #include <std_msgs/msg/color_rgba.hpp>
@@ -85,6 +87,32 @@ visualization_msgs::msg::MarkerArray make_corridor_markers(
     const std::vector<gcs::ConvexRegion>& regions,
     const std::vector<std::string>& tags,
     const std_msgs::msg::Header& hdr);
+
+/**
+ * @brief Builds a CUBE_LIST marker of the traversability map, one cube per valid cell
+ * at its fitted ground height, colored by per-cell traversability score.
+ * @remark Cubes sit at (cell_center.x, cell_center.y, ground_z) with edge = grid
+ * resolution; color ramps green (score 1) -> red (score 0) via
+ * trav::traversability_score(cell, robot).
+ * @param map Traversability map.
+ * @param robot Robot model used to score each cell.
+ * @param hdr Header to stamp the marker with.
+ * @return The marker array (a single CUBE_LIST marker).
+ */
+visualization_msgs::msg::MarkerArray make_traversability_markers(
+    const trav::TraversabilityMap& map, const trav::RobotModel& robot,
+    const std_msgs::msg::Header& hdr);
+
+/**
+ * @brief Builds a nav_msgs/OccupancyGrid from a 2D occupancy grid.
+ * @remark Occupied cells map to 100, free cells to 0; row-major layout matches
+ * trav::GridInfo::index (iy*nx + ix).
+ * @param grid Binary occupancy grid.
+ * @param hdr Header to stamp the message with.
+ * @return The occupancy grid message.
+ */
+nav_msgs::msg::OccupancyGrid make_occupancy_grid_msg(const trav::OccupancyGrid2D& grid,
+                                                     const std_msgs::msg::Header& hdr);
 
 }  // namespace gcs_planner
 #endif  // GCS_PLANNER__TRAJECTORY_MSG_BUILDERS_HPP_

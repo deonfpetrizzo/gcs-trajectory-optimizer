@@ -30,15 +30,17 @@ GroundPlaneFit fit_local_ground_plane(const MatrixXd& cloud, const VectorXd& cen
                                       double xy_radius, double z_window);
 
 /**
- * @brief Intersects a 3D region with a thin band around the fitted ground plane:
- * { x : |z - (a*x + b*y + c)| <= half_width }, appended as two halfspaces.
- * @param reg Region to clamp.
- * @param plane Ground plane to clamp against.
- * @param half_width Band half-width.
- * @return The clamped region.
+ * @brief Lifts a 2D polygon onto a sloped ground plane and extrudes it to a 3D prism.
+ * @remark Vertical walls from the polygon's halfspaces (z-free), a floor at
+ * plane + floor_offset, and a ceiling at plane + ceil_height -- a 2.5D sloped prism
+ * for ground-corridor generation.
+ * @param poly2d 2D convex polygon { x : A x <= b } (must be 2-dimensional).
+ * @param plane Ground plane to project the footprint onto.
+ * @param floor_offset Floor height above the plane.
+ * @param ceil_height Ceiling height above the plane.
+ * @return The 3D prism region.
  */
-ConvexRegion clamp_region_to_ground_band(const ConvexRegion& reg,
-                                         const GroundPlaneFit& plane,
-                                         double half_width);
+ConvexRegion lift_polygon_to_prism(const ConvexRegion& poly2d, const GroundPlaneFit& plane,
+                                   double floor_offset, double ceil_height);
 
 }  // namespace gcs

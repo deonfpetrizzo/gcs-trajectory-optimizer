@@ -22,6 +22,25 @@
 
 namespace gcs_planner {
 
+namespace {
+
+bool line_covered_by_regions(const Eigen::VectorXd& p0, const Eigen::VectorXd& p1,
+                             const std::vector<gcs::ConvexRegion>& regions,
+                             int samples, double tol) {
+    for (int k = 0; k <= samples; ++k) {
+        const double t = static_cast<double>(k) / samples;
+        const Eigen::VectorXd p = p0 + t * (p1 - p0);
+        bool inside = false;
+        for (const auto& r : regions) {
+            if (r.contains(p, tol)) { inside = true; break; }
+        }
+        if (!inside) return false;
+    }
+    return true;
+}
+
+}  // namespace
+
 PlannerNode::PlannerNode() : rclcpp::Node("planner") {
     R_          = declare_parameter("region_radius",  5.0);
     v_max_      = declare_parameter("vel_limit",      2.0);
@@ -35,7 +54,7 @@ PlannerNode::PlannerNode() : rclcpp::Node("planner") {
     frame_id_   = declare_parameter<std::string>("frame_id", "map");
     pcd_file_   = declare_parameter<std::string>("pcd_file", "");
     pcd_yaw_deg_ = declare_parameter("pcd_yaw_deg", 0.0);
-    ground_band_half_width_  = declare_parameter("ground_band_half_width", 0.2);
+    cloud_voxel_leaf_ = declare_parameter("cloud_voxel_leaf", 0.5);
     ground_plane_fit_radius_ = declare_parameter("ground_plane_fit_radius", R_);
     ground_plane_z_window_   = declare_parameter("ground_plane_z_window", 1.0);
     takeoff_landing_height_  = declare_parameter("takeoff_landing_height", 1.5);
@@ -54,6 +73,23 @@ PlannerNode::PlannerNode() : rclcpp::Node("planner") {
     h_dot_min_          = declare_parameter("h_dot_min", 1e-2);
     soc_facets_         = declare_parameter("soc_facets", 16);
     rest_to_rest_accel_ = declare_parameter("rest_to_rest_accel", true);
+
+    trav_resolution_       = declare_parameter("trav_resolution", 0.3);
+    trav_slope_fit_radius_ = declare_parameter("trav_slope_fit_radius", 0.6);
+    trav_ground_z_window_  = declare_parameter("trav_ground_z_window", 0.3);
+    trav_clearance_ceiling_ = declare_parameter("trav_clearance_ceiling", 2.0);
+    trav_min_points_       = declare_parameter("trav_min_points", 4);
+    trav_smooth_sigma_     = declare_parameter("trav_smooth_sigma", 1.0);
+    ground_grid_margin_    = declare_parameter("ground_grid_margin", 2.0);
+    ground_floor_offset_   = declare_parameter("ground_floor_offset", -0.5);
+    robot_max_slope_deg_   = declare_parameter("robot_max_slope_deg", 25.0);
+    robot_max_roughness_   = declare_parameter("robot_max_roughness", 0.05);
+    robot_max_step_        = declare_parameter("robot_max_step", 0.15);
+    robot_height_          = declare_parameter("robot_height", 1.0);
+    robot_min_clearance_   = declare_parameter("robot_min_clearance", 0.5);
+    robot_footprint_radius_ = declare_parameter("robot_footprint_radius", 0.3);
+    robot_allow_stairs_    = declare_parameter("robot_allow_stairs", false);
+    occ_score_threshold_   = declare_parameter("occ_score_threshold", 0.0);
 
     auto csv_files = declare_parameter<std::vector<std::string>>(
         "nominal_path_csv_files", std::vector<std::string>{});
@@ -100,6 +136,8 @@ PlannerNode::PlannerNode() : rclcpp::Node("planner") {
     auto latched = rclcpp::QoS(1).transient_local();
     cloud_pub_  = create_publisher<sensor_msgs::msg::PointCloud2>("map_cloud", latched);
     voxels_pub_ = create_publisher<visualization_msgs::msg::MarkerArray>("map_voxels", latched);
+    traversability_pub_ = create_publisher<visualization_msgs::msg::MarkerArray>("traversability", latched);
+    occupancy_pub_ = create_publisher<nav_msgs::msg::OccupancyGrid>("occupancy_grid", latched);
 
     for (auto& vp : vehicles_) {
         const std::string ns = vp.vehicle.empty() ? std::string() : ("/" + vp.vehicle);
@@ -182,9 +220,11 @@ bool PlannerNode::load_pcd(const std::string& file) {
     pcl::PointCloud<pcl::PointXYZ> pc_ds;
     pcl::VoxelGrid<pcl::PointXYZ> vg;
     vg.setInputCloud(pc.makeShared());
-    vg.setLeafSize(0.5f, 0.5f, 0.5f);
+    const float leaf = static_cast<float>(cloud_voxel_leaf_);
+    vg.setLeafSize(leaf, leaf, leaf);
     vg.filter(pc_ds);
-    RCLCPP_INFO(get_logger(), "downsampled to %zu points (0.5 m voxels)", pc_ds.size());
+    RCLCPP_INFO(get_logger(), "downsampled to %zu points (%.2f m voxels)", pc_ds.size(),
+                cloud_voxel_leaf_);
 
     auto msg = std::make_shared<sensor_msgs::msg::PointCloud2>();
     pcl::toROSMsg(pc_ds, *msg);
@@ -282,12 +322,96 @@ void PlannerNode::run_pipeline() {
                 std::chrono::duration_cast<Ms>(Clock::now() - t0).count(),
                 vehicles_.size());
 
+    compute_traversability_map(P);
+
     std::vector<std::thread> threads;
     threads.reserve(vehicles_.size());
     for (auto& vp : vehicles_) {
         threads.emplace_back([this, &vp, &P]() { run_pipeline_for_vehicle(vp, P); });
     }
     for (auto& t : threads) t.join();
+}
+
+trav::RobotModel PlannerNode::robot_model() const {
+    trav::RobotModel robot;
+    robot.max_slope_rad    = robot_max_slope_deg_ * M_PI / 180.0;
+    robot.max_roughness    = robot_max_roughness_;
+    robot.max_step         = robot_max_step_;
+    robot.height           = robot_height_;
+    robot.min_clearance    = robot_min_clearance_;
+    robot.footprint_radius = robot_footprint_radius_;
+    robot.allow_stairs     = robot_allow_stairs_;
+    return robot;
+}
+
+bool PlannerNode::map_ground_plane(double x, double y, gcs::GroundPlaneFit& out) const {
+    int ix, iy;
+    if (!trav_map_.info.world_to_cell(Eigen::Vector2d(x, y), ix, iy)) return false;
+    const trav::TraversabilityCell& c = trav_map_.at(ix, iy);
+    if (!c.valid) return false;
+    out.a = c.plane_a;
+    out.b = c.plane_b;
+    out.c = c.plane_c;
+    out.tilted = true;
+    return true;
+}
+
+Eigen::VectorXd PlannerNode::snap_to_ground(const Eigen::VectorXd& q,
+                                            const Eigen::MatrixXd& P) const {
+    const Eigen::Vector2d xy = occ_grid_.nearest_free(Eigen::Vector2d(q(0), q(1)));
+    gcs::GroundPlaneFit pl;
+    if (!map_ground_plane(xy.x(), xy.y(), pl)) {
+        Eigen::VectorXd c3(3);
+        c3 << xy.x(), xy.y(), q(2);
+        pl = gcs::fit_local_ground_plane(P, c3, ground_plane_fit_radius_, ground_plane_z_window_);
+    }
+    Eigen::VectorXd qs(3);
+    qs << xy.x(), xy.y(), pl.a * xy.x() + pl.b * xy.y() + pl.c;
+    return qs;
+}
+
+void PlannerNode::compute_traversability_map(const Eigen::MatrixXd& P) {
+    using Clock = std::chrono::steady_clock;
+    using Ms = std::chrono::duration<double, std::milli>;
+    auto t0 = Clock::now();
+
+    const trav::GridInfo info = trav::grid_from_cloud(P, trav_resolution_, ground_grid_margin_);
+
+    trav::TraversabilityParams tp;
+    tp.resolution         = trav_resolution_;
+    tp.slope_fit_radius   = trav_slope_fit_radius_;
+    tp.ground_z_window    = trav_ground_z_window_;
+    tp.clearance_ceiling  = trav_clearance_ceiling_;
+    tp.min_points_per_cell = trav_min_points_;
+
+    trav::TraversabilityMap map = trav::compute_traversability(P, info, tp);
+    if (trav_smooth_sigma_ > 0.0) trav::smooth_ground_field(map, trav_smooth_sigma_);
+
+    const trav::RobotModel robot = robot_model();
+    trav::OccupancyParams op;
+    op.score_threshold = occ_score_threshold_;
+
+    occ_grid_ = trav::make_occupancy_grid(map, robot, op);
+    occupied_xy_ = occ_grid_.occupied_centers();
+    trav_map_ = map;
+    has_trav_ = true;
+
+    const std_msgs::msg::Header hdr = make_header();
+    auto trav_markers = make_traversability_markers(map, robot, hdr);
+    auto occ_msg = make_occupancy_grid_msg(occ_grid_, hdr);
+
+    RCLCPP_INFO(get_logger(),
+                "traversability: %dx%d grid @ %.2fm, %ld occupied cells  [%.1f ms]",
+                info.nx, info.ny, trav_resolution_, occupied_xy_.rows(),
+                std::chrono::duration_cast<Ms>(Clock::now() - t0).count());
+
+    {
+        std::lock_guard<std::mutex> lk(state_mtx_);
+        last_trav_markers_ = trav_markers;
+        last_occ_grid_ = occ_msg;
+    }
+    traversability_pub_->publish(trav_markers);
+    occupancy_pub_->publish(occ_msg);
 }
 
 void PlannerNode::run_pipeline_for_vehicle(VehiclePlan& vp, const Eigen::MatrixXd& P) {
@@ -306,6 +430,27 @@ void PlannerNode::run_pipeline_for_vehicle(VehiclePlan& vp, const Eigen::MatrixX
     std::vector<gcs::CompositeTimingTrajectory> seg_trajs;
     std::vector<std::string> traj_tags;
 
+    std::vector<Eigen::VectorXd> bnd(vp.segments.size() + 1);
+    bnd[0] = vp.segments.front().waypoints.front();
+    for (size_t i = 0; i < vp.segments.size(); ++i)
+        bnd[i + 1] = vp.segments[i].waypoints.back();
+    if (has_trav_) {
+        for (size_t i = 0; i < vp.segments.size(); ++i) {
+            if (vp.segments[i].tag != "GROUND") continue;
+            bnd[i]     = snap_to_ground(bnd[i], P);
+            bnd[i + 1] = snap_to_ground(bnd[i + 1], P);
+        }
+    }
+
+    for (size_t i = 0; i < vp.segments.size(); ++i) {
+        if (vp.segments[i].tag != "TRANS" || vp.segments[i].waypoints.size() != 2) continue;
+        int ground = -1, air = -1;
+        if (i > 0 && vp.segments[i - 1].tag == "GROUND") { ground = static_cast<int>(i); air = static_cast<int>(i) + 1; }
+        else if (i + 1 < vp.segments.size() && vp.segments[i + 1].tag == "GROUND") { ground = static_cast<int>(i) + 1; air = static_cast<int>(i); }
+        if (ground < 0) continue;
+        bnd[air] << bnd[ground](0), bnd[ground](1), bnd[air](2);
+    }
+
     for (size_t si = 0; si < vp.segments.size(); ++si) {
         const auto& seg = vp.segments[si];
         if (seg.waypoints.size() < 2) {
@@ -313,7 +458,7 @@ void PlannerNode::run_pipeline_for_vehicle(VehiclePlan& vp, const Eigen::MatrixX
                         vp.vehicle.c_str(), si, seg.tag.c_str());
             continue;
         }
-        auto traj = plan_segment(vp, si, seg, P, all_regions, region_tags);
+        auto traj = plan_segment(vp, si, seg, P, bnd[si], bnd[si + 1], all_regions, region_tags);
         if (traj) {
             seg_trajs.push_back(std::move(*traj));
             traj_tags.push_back(seg.tag);
@@ -325,6 +470,7 @@ void PlannerNode::run_pipeline_for_vehicle(VehiclePlan& vp, const Eigen::MatrixX
 
 std::optional<gcs::CompositeTimingTrajectory> PlannerNode::plan_segment(
     const VehiclePlan& vp, size_t si, const PathSegment& seg, const Eigen::MatrixXd& P,
+    const Eigen::VectorXd& q0, const Eigen::VectorXd& qT,
     std::vector<gcs::ConvexRegion>& all_regions,
     std::vector<std::string>& region_tags) const {
 
@@ -347,12 +493,12 @@ std::optional<gcs::CompositeTimingTrajectory> PlannerNode::plan_segment(
         RCLCPP_INFO(get_logger(),
                     "vehicle '%s' segment %zu (TRANS): vertical hop (%.2f m); building corridor "
                     "(R=%.1f, %d threads)...",
-                    vp.vehicle.c_str(), si, (seg.waypoints.back() - seg.waypoints.front()).norm(),
+                    vp.vehicle.c_str(), si, (qT - q0).norm(),
                     R_, num_threads_);
 
         t0 = Clock::now();
-        auto cr = gcs::build_corridor_parallel(seg.waypoints.front(), seg.waypoints.back(),
-                                               seg.waypoints, P, copt);
+        const std::vector<Eigen::VectorXd> hop = {q0, qT};
+        auto cr = gcs::build_corridor_parallel(q0, qT, hop, P, copt);
         RCLCPP_INFO(get_logger(),
                     "vehicle '%s' segment %zu (TRANS): built corridor: %zu regions in %d round(s), "
                     "connected=%s  [%.1f ms]",
@@ -369,45 +515,65 @@ std::optional<gcs::CompositeTimingTrajectory> PlannerNode::plan_segment(
             region_tags.push_back(seg.tag);
         }
 
-        const bool contained = std::any_of(cr.regions.begin(), cr.regions.end(),
-            [&](const gcs::ConvexRegion& r) {
-                return r.contains(seg.waypoints.front()) && r.contains(seg.waypoints.back());
-            });
-        if (!contained) {
+        const int cover_samples = std::max(8, static_cast<int>(std::ceil((qT - q0).norm() / 0.1)));
+        if (!line_covered_by_regions(q0, qT, cr.regions, cover_samples, 1e-4)) {
             RCLCPP_ERROR(get_logger(),
-                        "vehicle '%s' segment %zu (TRANS): vertical hop not fully contained in any "
-                        "single grown region, skipping", vp.vehicle.c_str(), si);
+                        "vehicle '%s' segment %zu (TRANS): vertical hop not covered by the grown "
+                        "corridor, skipping", vp.vehicle.c_str(), si);
             return std::nullopt;
         }
 
-        auto traj = make_vertical_trajectory(seg.waypoints.front(), seg.waypoints.back(),
-                                             v_max_, takeoff_landing_accel_limit_);
+        auto traj = make_vertical_trajectory(q0, qT, v_max_, takeoff_landing_accel_limit_);
         RCLCPP_INFO(get_logger(), "vehicle '%s' segment %zu (TRANS): vertical trajectory: T=%.2fs",
                     vp.vehicle.c_str(), si, traj.total_duration());
         return traj;
     }
 
-    if (seg.tag == "GROUND") {
-        const double fit_radius = ground_plane_fit_radius_;
-        const double z_window   = ground_plane_z_window_;
-        const double half_width = ground_band_half_width_;
-        copt.region_postprocess = [&P, fit_radius, z_window, half_width]
-            (const Eigen::VectorXd& pq, gcs::ConvexRegion& reg) {
-            auto plane = gcs::fit_local_ground_plane(P, pq, fit_radius, z_window);
-            reg = gcs::clamp_region_to_ground_band(reg, plane, half_width);
-        };
-    }
+    const Eigen::VectorXd& q0_used = q0;
+    const Eigen::VectorXd& qT_used = qT;
+    gcs::CorridorResult cr;
 
-    RCLCPP_INFO(get_logger(),
-                "vehicle '%s' segment %zu (%s): %zu waypoints; building corridor (R=%.1f, %d threads)...",
-                vp.vehicle.c_str(), si, seg.tag.c_str(), seg.waypoints.size(), R_, num_threads_);
-    t0 = Clock::now();
-    auto cr = gcs::build_corridor_parallel(seg.waypoints.front(), seg.waypoints.back(),
-                                           seg.waypoints, P, copt);
-    RCLCPP_INFO(get_logger(),
-                "vehicle '%s' segment %zu (%s): built corridor: %zu regions in %d round(s), connected=%s  [%.1f ms]",
-                vp.vehicle.c_str(), si, seg.tag.c_str(), cr.regions.size(), cr.rounds,
-                cr.connected ? "true" : "false", elapsed(t0));
+    if (seg.tag == "GROUND") {
+        if (!has_trav_) {
+            RCLCPP_WARN(get_logger(),
+                        "vehicle '%s' segment %zu (GROUND): traversability map unavailable, skipping",
+                        vp.vehicle.c_str(), si);
+            return std::nullopt;
+        }
+        auto map_plane = [this](double x, double y, gcs::GroundPlaneFit& out) -> bool {
+            return map_ground_plane(x, y, out);
+        };
+
+        gcs::GroundCorridorOptions gopt;
+        gopt.corridor2d         = copt;
+        gopt.robot_height       = robot_height_;
+        gopt.floor_offset       = ground_floor_offset_;
+        gopt.plane_fit_radius   = ground_plane_fit_radius_;
+        gopt.plane_fit_z_window = ground_plane_z_window_;
+
+        RCLCPP_INFO(get_logger(),
+                    "vehicle '%s' segment %zu (GROUND): %zu waypoints; building ground corridor "
+                    "(R=%.1f, %d threads)...",
+                    vp.vehicle.c_str(), si, seg.waypoints.size(), R_, num_threads_);
+        t0 = Clock::now();
+        cr = gcs::build_ground_corridor(q0_used, qT_used, seg.waypoints, occupied_xy_, P, gopt,
+                                        map_plane);
+        RCLCPP_INFO(get_logger(),
+                    "vehicle '%s' segment %zu (GROUND): built corridor: %zu regions in %d round(s), "
+                    "connected=%s  [%.1f ms]",
+                    vp.vehicle.c_str(), si, cr.regions.size(), cr.rounds,
+                    cr.connected ? "true" : "false", elapsed(t0));
+    } else {
+        RCLCPP_INFO(get_logger(),
+                    "vehicle '%s' segment %zu (%s): %zu waypoints; building corridor (R=%.1f, %d threads)...",
+                    vp.vehicle.c_str(), si, seg.tag.c_str(), seg.waypoints.size(), R_, num_threads_);
+        t0 = Clock::now();
+        cr = gcs::build_corridor_parallel(q0_used, qT_used, seg.waypoints, P, copt);
+        RCLCPP_INFO(get_logger(),
+                    "vehicle '%s' segment %zu (%s): built corridor: %zu regions in %d round(s), connected=%s  [%.1f ms]",
+                    vp.vehicle.c_str(), si, seg.tag.c_str(), cr.regions.size(), cr.rounds,
+                    cr.connected ? "true" : "false", elapsed(t0));
+    }
 
     if (cr.regions.empty()) {
         RCLCPP_WARN(get_logger(), "vehicle '%s' segment %zu (%s): no regions grown, skipping",
@@ -418,11 +584,6 @@ std::optional<gcs::CompositeTimingTrajectory> PlannerNode::plan_segment(
         RCLCPP_WARN(get_logger(),
                     "vehicle '%s' segment %zu (%s): corridor did not connect q0->qT after %d rounds; "
                     "attempting plan anyway", vp.vehicle.c_str(), si, seg.tag.c_str(), cr.rounds);
-    }
-
-    for (const auto& r : cr.regions) {
-        all_regions.push_back(r);
-        region_tags.push_back(seg.tag);
     }
 
     try {
@@ -454,9 +615,13 @@ std::optional<gcs::CompositeTimingTrajectory> PlannerNode::plan_segment(
         opt.w_geom_length = w_geom_length_;
 
         t0 = Clock::now();
-        auto traj = planner.plan_composite(seg.waypoints.front(), seg.waypoints.back(), opt);
+        auto traj = planner.plan_composite(q0_used, qT_used, opt);
         RCLCPP_INFO(get_logger(), "vehicle '%s' segment %zu (%s): trajectory optimized: T=%.2fs  [%.1f ms]",
                     vp.vehicle.c_str(), si, seg.tag.c_str(), traj.total_duration(), elapsed(t0));
+        for (int idx : traj.region_sequence) {
+            all_regions.push_back(cr.regions[idx]);
+            region_tags.push_back(seg.tag);
+        }
         return traj;
     } catch (const std::exception& e) {
         RCLCPP_ERROR(get_logger(), "vehicle '%s' segment %zu (%s): planning failed: %s",
@@ -530,6 +695,14 @@ void PlannerNode::publish_all() {
     if (!last_voxels_.markers.empty()) {
         for (auto& m : last_voxels_.markers) m.header.stamp = stamp;
         voxels_pub_->publish(last_voxels_);
+    }
+    if (!last_trav_markers_.markers.empty()) {
+        for (auto& m : last_trav_markers_.markers) m.header.stamp = stamp;
+        traversability_pub_->publish(last_trav_markers_);
+    }
+    if (!last_occ_grid_.data.empty()) {
+        last_occ_grid_.header.stamp = stamp;
+        occupancy_pub_->publish(last_occ_grid_);
     }
 
     for (auto& vp : vehicles_) {

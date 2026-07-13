@@ -15,8 +15,10 @@ find_package(Threads REQUIRED)
 add_library(gcs_core STATIC
   src/qp_solver.cpp
   src/convex_region.cpp
+  src/point_index.cpp
   src/free_space_regions.cpp
   src/ground_plane.cpp
+  src/ground_corridor.cpp
   src/bezier.cpp
   src/bezier_planner.cpp
   src/composite_planner.cpp

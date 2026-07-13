@@ -1,8 +1,9 @@
 planner:
   ros__parameters:
-    pcd_file: /home/deon/ros2_ws/maps/map.pcd   # point cloud map to load at startup
-    frame_id: map                               # frame all published messages are stamped in
-    pcd_yaw_deg: 99.0                           # rotates the raw cloud about Z after loading, to match the nominal path's frame
+    pcd_file: /home/deon/gcs_planning_ws/maps/caltech_scan.pcd   # point cloud map to load at startup
+    frame_id: map                                # frame all published messages are stamped in
+    pcd_yaw_deg: 189.0                           # rotates the raw cloud about Z after loading, to match the nominal path's frame
+    cloud_voxel_leaf: 0.2                        # voxel-downsample leaf size (m) applied to the loaded cloud = point spacing; trav_resolution should stay >= this
 
     nominal_path: [14.1, -65.9, 5.0,  19.9, -58.7, 5.0,  27.8, -53.7, 5.0,  32.8, -45.8, 5.0,  40.0, -40.0, 5.0]  # flat x,y,z fallback path
     nominal_path_csv_files: [                   # one file per vehicle; seg_idx/tag columns split each into segments
@@ -16,13 +17,32 @@ planner:
 
     region_radius: 5.0             # sphere-flip region radius (R)
     num_threads: 10                # regions grown per round
-    max_rounds: 200                # safety cap on growth rounds
-    drop_covered_samples: true     # skip a sample already covered by a grown region
+    max_rounds: 300                # safety cap on growth rounds
+    drop_covered_samples: false    # skip a sample already covered by a grown region
     corridor_seed: 0               # 0 seeds from std::random_device (non-deterministic)
 
-    ground_band_half_width: 0.2      # half-width of the terrain-following band
-    ground_plane_fit_radius: 2.0     # horizontal radius for the local plane fit
-    ground_plane_z_window: 1.0       # vertical window for the local plane fit
+    ground_plane_fit_radius: 2.0     # horizontal radius for the local ground-plane fit (corridor lift + endpoint z-snap)
+    ground_plane_z_window: 1.0       # vertical window for the local ground-plane fit
+    ground_floor_offset: -0.5        # prism floor relative to the fitted plane (negative = below plane, gives z-margin)
+    ground_grid_margin: 2.0          # xy padding added around the cloud bounds when sizing the traversability grid
+
+    trav_resolution: 0.3             # traversability/occupancy grid cell size (m); keep >= cloud point spacing
+    trav_slope_fit_radius: 0.3       # neighborhood radius for the per-cell PCA plane fit (slope/roughness)
+    trav_ground_z_window: 0.3        # z-band above local ground kept for the per-cell plane fit
+    trav_clearance_ceiling: 2.0      # how high above ground to scan a column for overhead obstacles
+    trav_min_points: 4               # min neighborhood points for a cell to be valid (else marked occupied)
+    trav_smooth_sigma: 1.0           # Gaussian smoothing radius (cells) for the ground-height field; <= 0 disables
+
+    robot_max_slope_deg: 20.0        # max traversable terrain slope
+    robot_max_roughness: 0.5         # max terrain roughness (RMS residual of the plane fit, m)
+    robot_max_step: 0.15             # max traversable step/curb height (m); waived when robot_allow_stairs
+    robot_height: 1.0                # ground-corridor prism height + required overhead clearance (m)
+    robot_min_clearance: 0.5         # reserved: minimum free band above ground (occupancy currently gates on robot_height)
+    robot_footprint_radius: 0.3      # occupancy inflation radius (m)
+    robot_allow_stairs: true         # legged robots: waive the step-height gate (treat stairs as traversable)
+
+    occ_score_threshold: 0.3         # a cell is free iff its traversability score >= this (and clearance ok)
+    occ_inflate: false               # dilate occupied cells by robot_footprint_radius
 
     takeoff_landing_height: 1.5         # vertical column height
     takeoff_landing_accel_limit: 1.0    # acceleration limit for the closed-form quintic ease profile
@@ -39,11 +59,12 @@ planner:
     soc_facets: 16                  # polyhedral facet count approximating the velocity SOC
     rest_to_rest_accel: true        # zero acceleration at each segment's start/end
 
-    w_geom_accel: 10.0     # weight on integral ||q''||^2 (geometric smoothness)
-    w_time_accel: 0.5      # weight on integral ||h''||^2 (timing smoothness)
-    w_geom_jerk: 0.1       # weight on integral ||q'''||^2
-    w_geom_length: 30.0    # weight on integral ||q'||^2 (path-length proxy)
-    w_time: 0.05           # weight on total duration T
+    # objective regularization terms
+    w_geom_accel: 0.3      # weight on integral ||q''||^2 (geometric smoothness)
+    w_time_accel: 0.1      # weight on integral ||h''||^2 (timing smoothness)
+    w_geom_jerk: 0.0       # weight on integral ||q'''||^2
+    w_geom_length: 1.0     # weight on integral ||q'||^2 (path-length proxy)
+    w_time: 0.5            # weight on total duration T
 
 trajectory_executor:
   ros__parameters:

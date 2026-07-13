@@ -83,15 +83,13 @@ Hull qhull(const MatrixXd& pts) {
 }
 }  // namespace
 
-MatrixXd generate_star_convex(const VectorXd& pq, const MatrixXd& cloud, double R,
+MatrixXd generate_star_convex(const VectorXd& pq, const PointIndex& index, double R,
                                bool sphere_floor) {
-    const int d = cloud.cols();
+    const MatrixXd& cloud = index.cloud();
+    const int d = index.dim();
 
     std::vector<int> in;
-    for (int i = 0; i < cloud.rows(); ++i) {
-        double dd = (cloud.row(i).transpose() - pq).norm();
-        if (dd > 1e-10 && dd < R) in.push_back(i);
-    }
+    index.radius_query(pq, R, 1e-10, in);
 
     if (!sphere_floor) {
         MatrixXd pts(in.size(), d);
@@ -126,6 +124,12 @@ MatrixXd generate_star_convex(const VectorXd& pq, const MatrixXd& cloud, double 
     MatrixXd flipped = sphere_flip(pts, pq, R);
     Hull h = qhull(flipped);
     return inv_sphere_flip(h.vertices, pq, R);
+}
+
+MatrixXd generate_star_convex(const VectorXd& pq, const MatrixXd& cloud, double R,
+                               bool sphere_floor) {
+    PointIndex index(cloud, R);
+    return generate_star_convex(pq, index, R, sphere_floor);
 }
 
 namespace {
@@ -177,12 +181,10 @@ void star_to_convex(const MatrixXd& star_verts, const VectorXd& pq,
 
 namespace {
 VectorXd tighten_against_cloud(const MatrixXd& A, const VectorXd& b,
-                               const VectorXd& pq, const MatrixXd& cloud, double R) {
+                               const VectorXd& pq, const PointIndex& index, double R) {
+    const MatrixXd& cloud = index.cloud();
     std::vector<int> near;
-    for (int i = 0; i < cloud.rows(); ++i) {
-        double dd = (cloud.row(i).transpose() - pq).norm();
-        if (dd > 1e-9 && dd < R) near.push_back(i);
-    }
+    index.radius_query(pq, R, 1e-9, near);
     if (near.empty()) return b;
     MatrixXd normals = A;
     for (int i = 0; i < A.rows(); ++i) normals.row(i) /= A.row(i).norm();
@@ -205,15 +207,23 @@ VectorXd tighten_against_cloud(const MatrixXd& A, const VectorXd& b,
 }
 }  // namespace
 
+ConvexRegion convex_region_from_pointcloud(const VectorXd& pq, const PointIndex& index,
+                                           double R, bool tighten,
+                                           const std::string& name,
+                                           bool sphere_floor) {
+    MatrixXd sv = generate_star_convex(pq, index, R, sphere_floor);
+    MatrixXd A; VectorXd b;
+    star_to_convex(sv, pq, A, b);
+    if (tighten) b = tighten_against_cloud(A, b, pq, index, R);
+    return ConvexRegion(A, b, name);
+}
+
 ConvexRegion convex_region_from_pointcloud(const VectorXd& pq, const MatrixXd& cloud,
                                            double R, bool tighten,
                                            const std::string& name,
                                            bool sphere_floor) {
-    MatrixXd sv = generate_star_convex(pq, cloud, R, sphere_floor);
-    MatrixXd A; VectorXd b;
-    star_to_convex(sv, pq, A, b);
-    if (tighten) b = tighten_against_cloud(A, b, pq, cloud, R);
-    return ConvexRegion(A, b, name);
+    PointIndex index(cloud, R);
+    return convex_region_from_pointcloud(pq, index, R, tighten, name, sphere_floor);
 }
 
 }  // namespace gcs
