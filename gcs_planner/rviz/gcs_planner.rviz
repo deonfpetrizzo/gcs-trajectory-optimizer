@@ -24,7 +24,7 @@ Panels:
     Experimental: false
     Name: Time
     SyncMode: 0
-    SyncSource: ""
+    SyncSource: MapCloud
 Visualization Manager:
   Class: ""
   Displays:
@@ -49,8 +49,8 @@ Visualization Manager:
     - Alpha: 1
       Autocompute Intensity Bounds: true
       Autocompute Value Bounds:
-        Max Value: 98.78370666503906
-        Min Value: -7.832589149475098
+        Max Value: 46.36637878417969
+        Min Value: -11.960108757019043
         Value: true
       Axis: Z
       Channel Name: intensity
@@ -69,7 +69,7 @@ Visualization Manager:
       Selectable: true
       Size (Pixels): 2
       Size (m): 0.30000001192092896
-      Style: Flat Squares
+      Style: Squares
       Topic:
         Depth: 5
         Durability Policy: Transient Local
@@ -81,17 +81,17 @@ Visualization Manager:
       Use rainbow: true
       Value: false
     - Class: rviz_default_plugins/MarkerArray
-      Enabled: true
+      Enabled: false
       Name: Traversability
       Namespaces:
-        traversability: true
+        {}
       Topic:
         Depth: 5
         Durability Policy: Transient Local
         History Policy: Keep Last
         Reliability Policy: Reliable
         Value: /traversability
-      Value: true
+      Value: false
     - Alpha: 0.699999988079071
       Class: rviz_default_plugins/Map
       Color Scheme: map
@@ -145,7 +145,7 @@ Visualization Manager:
       Enabled: true
       Name: Corridor_m4
       Namespaces:
-        {}
+        corridor: true
       Topic:
         Depth: 5
         Durability Policy: Transient Local
@@ -157,7 +157,7 @@ Visualization Manager:
       Enabled: true
       Name: TrajectorySegments_m4
       Namespaces:
-        {}
+        trajectory_segments: true
       Topic:
         Depth: 5
         Durability Policy: Transient Local
@@ -169,7 +169,7 @@ Visualization Manager:
       Enabled: true
       Name: TrajectoryExecMarkers_m4
       Namespaces:
-        {}
+        trajectory_exec: true
       Topic:
         Depth: 5
         Durability Policy: Volatile
@@ -209,7 +209,7 @@ Visualization Manager:
       Enabled: true
       Name: Corridor_g1
       Namespaces:
-        {}
+        corridor: true
       Topic:
         Depth: 5
         Durability Policy: Transient Local
@@ -221,7 +221,7 @@ Visualization Manager:
       Enabled: true
       Name: TrajectorySegments_g1
       Namespaces:
-        {}
+        trajectory_segments: true
       Topic:
         Depth: 5
         Durability Policy: Transient Local
@@ -233,7 +233,7 @@ Visualization Manager:
       Enabled: true
       Name: TrajectoryExecMarkers_g1
       Namespaces:
-        {}
+        trajectory_exec: true
       Topic:
         Depth: 5
         Durability Policy: Volatile
@@ -273,7 +273,7 @@ Visualization Manager:
       Enabled: true
       Name: Corridor_g1m4
       Namespaces:
-        {}
+        corridor: true
       Topic:
         Depth: 5
         Durability Policy: Transient Local
@@ -285,7 +285,7 @@ Visualization Manager:
       Enabled: true
       Name: TrajectorySegments_g1m4
       Namespaces:
-        {}
+        trajectory_segments: true
       Topic:
         Depth: 5
         Durability Policy: Transient Local
@@ -297,7 +297,7 @@ Visualization Manager:
       Enabled: true
       Name: TrajectoryExecMarkers_g1m4
       Namespaces:
-        {}
+        trajectory_exec: true
       Topic:
         Depth: 5
         Durability Policy: Volatile
@@ -351,25 +351,25 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz_default_plugins/Orbit
-      Distance: 102.03333282470703
+      Distance: 239.87567138671875
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
         Swap Stereo Eyes: false
         Value: false
       Focal Point:
-        X: 0
-        Y: 0
-        Z: 0
+        X: 30.368465423583984
+        Y: -46.952144622802734
+        Z: -17.21625518798828
       Focal Shape Fixed Size: true
       Focal Shape Size: 0.05000000074505806
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Pitch: 0.14539852738380432
+      Pitch: 0.5403982400894165
       Target Frame: <Fixed Frame>
       Value: Orbit (rviz)
-      Yaw: 0.4853982925415039
+      Yaw: 0.27721574902534485
     Saved: ~
 Window Geometry:
   Displays:

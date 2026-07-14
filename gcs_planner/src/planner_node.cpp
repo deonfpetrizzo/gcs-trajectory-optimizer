@@ -9,6 +9,8 @@
 #include <pcl/point_types.h>
 #include <pcl/io/pcd_io.h>
 #include <pcl/filters/voxel_grid.h>
+#include <pcl/filters/radius_outlier_removal.h>
+#include <pcl/filters/statistical_outlier_removal.h>
 #include <pcl_conversions/pcl_conversions.h>
 
 #include <algorithm>
@@ -55,6 +57,13 @@ PlannerNode::PlannerNode() : rclcpp::Node("planner") {
     pcd_file_   = declare_parameter<std::string>("pcd_file", "");
     pcd_yaw_deg_ = declare_parameter("pcd_yaw_deg", 0.0);
     cloud_voxel_leaf_ = declare_parameter("cloud_voxel_leaf", 0.5);
+    viz_voxel_leaf_   = declare_parameter("viz_voxel_leaf", 0.0);
+    outlier_filter_enable_ = declare_parameter("outlier_filter_enable", true);
+    outlier_filter_type_   = declare_parameter<std::string>("outlier_filter_type", "radius");
+    outlier_radius_        = declare_parameter("outlier_radius", 0.5);
+    outlier_min_neighbors_ = declare_parameter("outlier_min_neighbors", 4);
+    outlier_mean_k_        = declare_parameter("outlier_mean_k", 20);
+    outlier_stddev_        = declare_parameter("outlier_stddev", 1.0);
     ground_plane_fit_radius_ = declare_parameter("ground_plane_fit_radius", R_);
     ground_plane_z_window_   = declare_parameter("ground_plane_z_window", 1.0);
     takeoff_landing_height_  = declare_parameter("takeoff_landing_height", 1.5);
@@ -226,15 +235,53 @@ bool PlannerNode::load_pcd(const std::string& file) {
     RCLCPP_INFO(get_logger(), "downsampled to %zu points (%.2f m voxels)", pc_ds.size(),
                 cloud_voxel_leaf_);
 
+    if (outlier_filter_enable_) {
+        const size_t before = pc_ds.size();
+        pcl::PointCloud<pcl::PointXYZ> pc_f;
+        if (outlier_filter_type_ == "statistical") {
+            pcl::StatisticalOutlierRemoval<pcl::PointXYZ> sor;
+            sor.setInputCloud(pc_ds.makeShared());
+            sor.setMeanK(outlier_mean_k_);
+            sor.setStddevMulThresh(outlier_stddev_);
+            sor.filter(pc_f);
+        } else {
+            pcl::RadiusOutlierRemoval<pcl::PointXYZ> ror;
+            ror.setInputCloud(pc_ds.makeShared());
+            ror.setRadiusSearch(outlier_radius_);
+            ror.setMinNeighborsInRadius(outlier_min_neighbors_);
+            ror.filter(pc_f);
+        }
+        pc_ds.swap(pc_f);
+        RCLCPP_INFO(get_logger(), "outlier filter (%s) removed %zu points (%zu -> %zu)",
+                    outlier_filter_type_.c_str(), before - pc_ds.size(), before, pc_ds.size());
+    }
+
     auto msg = std::make_shared<sensor_msgs::msg::PointCloud2>();
     pcl::toROSMsg(pc_ds, *msg);
     msg->header.frame_id = frame_id_;
     msg->header.stamp = now();
+
+    auto viz_msg = msg;
+    if (viz_voxel_leaf_ > cloud_voxel_leaf_) {
+        pcl::PointCloud<pcl::PointXYZ> pc_viz;
+        pcl::VoxelGrid<pcl::PointXYZ> vgv;
+        vgv.setInputCloud(pc_ds.makeShared());
+        const float vleaf = static_cast<float>(viz_voxel_leaf_);
+        vgv.setLeafSize(vleaf, vleaf, vleaf);
+        vgv.filter(pc_viz);
+        viz_msg = std::make_shared<sensor_msgs::msg::PointCloud2>();
+        pcl::toROSMsg(pc_viz, *viz_msg);
+        viz_msg->header.frame_id = frame_id_;
+        viz_msg->header.stamp = now();
+        RCLCPP_INFO(get_logger(), "viz map_cloud downsampled to %zu points (%.2f m voxels)",
+                    pc_viz.size(), viz_voxel_leaf_);
+    }
     {
         std::lock_guard<std::mutex> lk(state_mtx_);
         last_cloud_ = msg;
+        last_map_cloud_ = viz_msg;
     }
-    cloud_pub_->publish(*msg);
+    cloud_pub_->publish(*viz_msg);
 
     visualization_msgs::msg::Marker cube_marker;
     cube_marker.header.frame_id = frame_id_;
@@ -688,9 +735,10 @@ void PlannerNode::publish_all() {
     std::lock_guard<std::mutex> lk(state_mtx_);
     const auto stamp = now();
 
-    if (last_cloud_) {
-        last_cloud_->header.stamp = stamp;
-        cloud_pub_->publish(*last_cloud_);
+    const auto& map_cloud = last_map_cloud_ ? last_map_cloud_ : last_cloud_;
+    if (map_cloud) {
+        map_cloud->header.stamp = stamp;
+        cloud_pub_->publish(*map_cloud);
     }
     if (!last_voxels_.markers.empty()) {
         for (auto& m : last_voxels_.markers) m.header.stamp = stamp;

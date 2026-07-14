@@ -200,6 +200,13 @@ private:
     double R_, v_max_, sample_dt_;
     double pcd_yaw_deg_;
     double cloud_voxel_leaf_;
+    double viz_voxel_leaf_;              ///< coarser leaf for the published map_cloud only; <= cloud_voxel_leaf publishes the computation cloud
+    bool        outlier_filter_enable_;  ///< master on/off for cloud outlier removal in load_pcd()
+    std::string outlier_filter_type_;    ///< "radius" (RadiusOutlierRemoval) or "statistical" (StatisticalOutlierRemoval)
+    double      outlier_radius_;         ///< radius method: neighbor search radius (m)
+    int         outlier_min_neighbors_;  ///< radius method: min neighbors within radius to keep a point
+    int         outlier_mean_k_;         ///< statistical method: neighbor count for the mean-distance statistic
+    double      outlier_stddev_;         ///< statistical method: std-dev multiplier threshold
     double ground_plane_fit_radius_, ground_plane_z_window_;
     double takeoff_landing_height_;
     double takeoff_landing_accel_limit_;
@@ -243,7 +250,8 @@ private:
     rclcpp::TimerBase::SharedPtr republish_timer_;
 
     std::mutex state_mtx_;
-    sensor_msgs::msg::PointCloud2::SharedPtr last_cloud_;
+    sensor_msgs::msg::PointCloud2::SharedPtr last_cloud_;       ///< computation cloud (cloud_voxel_leaf), consumed by run_pipeline()
+    sensor_msgs::msg::PointCloud2::SharedPtr last_map_cloud_;   ///< coarser cloud published on map_cloud for visualization only
     visualization_msgs::msg::MarkerArray last_voxels_;
     visualization_msgs::msg::MarkerArray last_trav_markers_;
     nav_msgs::msg::OccupancyGrid last_occ_grid_;
